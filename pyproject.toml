@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "GeodeBicoccaTemplatePythonProject"
+version = "1.0.1"
+dynamic = ["dependencies"]
+authors = [
+  { name="Geode-solutions", email="contact@geode-solutions.com" },
+]
+description = "Template python project"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/Geode-solutions/2025MilanoBicocca"
+"Bug Tracker" = "https://github.com/Geode-solutions/2025MilanoBicocca/issues"
+
+[project.scripts]
+string_upper = "template_python_project.functions:string_upper"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"template_python_project" = ["*.og_brep"]
+
+[tool.semantic_release]
+version_toml = [
+    "pyproject.toml:project.version",
+]
+
+[tool.semantic_release.remote.token]
+env = "GH_TOKEN"
+
+[tool.semantic_release.branches.master]
+match = "master"
+
+[tool.semantic_release.branches.next]
+match = "next"
+prerelease = true
