@@ -1,0 +1,15 @@
+# Core geospatial + plotting stack
+geopandas
+shapely>=2.0
+fiona
+pyproj
+rtree
+matplotlib
+numpy
+pandas
+
+# Parallelization
+joblib
+
+# Optional: notebook interface
+jupyter
