@@ -336,6 +336,98 @@ def generate_radius_list(
     return radius_list
 
 
+def load_and_validate_data(boundary_file=None, lineaments_file=None):
+    # --- Load Data ---
+    data_load_t0 = time.perf_counter()
+    if not os.path.exists(boundary_file):
+        print(f"ERROR: Boundary file not found: {boundary_file}")
+        exit(1)
+    if not os.path.exists(lineaments_file):
+        print(f"ERROR: Lineaments file not found: {lineaments_file}")
+        exit(1)
+
+    bnd_gdf = gpd.read_file(boundary_file)
+    if bnd_gdf.shape[0] == 0:
+        print(f"ERROR: Boundary polygon is empty: {boundary_file}")
+        exit(1)
+    if bnd_gdf.shape[0] > 1:
+        print(f"WARNING: Boundary polygon has multiple polygons: {boundary_file}")
+        exit(1)
+    if bnd_gdf.geometry.type.iloc[0] != "Polygon":
+        print(f"ERROR: Boundary polygon is not a polygon: {boundary_file}")
+        exit(1)
+
+    lineaments_gdf = gpd.read_file(lineaments_file).to_crs(bnd_gdf.crs)
+    if lineaments_gdf.shape[0] == 0:
+        print(f"ERROR: Lineaments file is empty: {lineaments_file}")
+        exit(1)
+    if lineaments_gdf.geometry.type.iloc[0] not in ["LineString", "MultiLineString"]:
+        print(f"ERROR: Lineaments file is not a line: {lineaments_file}")
+        exit(1)
+
+    print(
+        f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter() - data_load_t0:.3f}s"
+    )
+
+    # --- Compute maximum admissible circle radius for the boundary polygon ---
+    max_radius = shapely.maximum_inscribed_circle(bnd_gdf.geometry.iloc[0])
+    center_coords = list(max_radius.coords)[0]
+    center_pt = shapely.geometry.Point(center_coords)
+    radius_coords = list(max_radius.coords)[1]
+    radius_pt = shapely.geometry.Point(radius_coords)
+    max_admissible_radius = max_radius.length
+    print(
+        f"Center point of maximum inscribed circle: ({center_pt.x:.2f}, {center_pt.y:.2f})"
+    )
+    print(
+        f"Radius point of maximum inscribed circle: ({radius_pt.x:.2f}, {radius_pt.y:.2f})"
+    )
+    print(f"Maximum admissible circle radius: {max_admissible_radius:.2f}")
+
+    # --- Plot boundary, max circle, center, and first point ---
+    if PLOT_FIGURES:
+        fig_1, ax1 = plt.subplots(figsize=(8, 8))
+        bnd_gdf.plot(ax=ax1, facecolor="none", edgecolor="black", linewidth=1.5)
+        circle_patch = mpl_circle(
+            (center_pt.x, center_pt.y),
+            max_admissible_radius,
+            edgecolor="blue",
+            facecolor="none",
+            linewidth=2,
+            label="Max Admissible Circle",
+        )
+        ax1.plot(center_pt.x, center_pt.y, "o", color="green", markersize=12)
+        ax1.add_patch(circle_patch)
+        legend_handles = [
+            mpl_line([0], [0], color="black", lw=1.5, label="Boundary"),
+            mpl_patch(
+                edgecolor="blue",
+                facecolor="none",
+                linewidth=2,
+                label="Max Admissible Circle",
+            ),
+            mpl_line(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="green",
+                markersize=12,
+                label="Circle Center",
+            ),
+        ]
+        plt.title("Boundary, Maximum Inscribed Circle, Center, and First Point")
+        plt.legend(handles=legend_handles)
+        plt.axis("equal")
+        plt.tight_layout()
+        fig_path_png = os.path.join(output_folder, "boundary_max_radius_center.png")
+        fig_path_svg = os.path.join(output_folder, "boundary_max_radius_center.svg")
+        fig_1.savefig(fig_path_png, dpi=300)
+        fig_1.savefig(fig_path_svg, format="svg")
+        print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
+
+    return bnd_gdf, lineaments_gdf, max_admissible_radius
+
 #################################################################################################
 # Main script execution starts here
 
@@ -350,95 +442,8 @@ radius_list = generate_radius_list(
     spacing_type=spacing_type,
 )
 
-# --- Load Data ---
-data_load_t0 = time.perf_counter()
-if not os.path.exists(boundary_file):
-    print(f"ERROR: Boundary file not found: {boundary_file}")
-    exit(1)
-if not os.path.exists(lineaments_file):
-    print(f"ERROR: Lineaments file not found: {lineaments_file}")
-    exit(1)
-
-bnd_gdf = gpd.read_file(boundary_file)
-if bnd_gdf.shape[0] == 0:
-    print(f"ERROR: Boundary polygon is empty: {boundary_file}")
-    exit(1)
-if bnd_gdf.shape[0] > 1:
-    print(f"WARNING: Boundary polygon has multiple polygons: {boundary_file}")
-    exit(1)
-if bnd_gdf.geometry.type.iloc[0] != "Polygon":
-    print(f"ERROR: Boundary polygon is not a polygon: {boundary_file}")
-    exit(1)
-
-lineaments_gdf = gpd.read_file(lineaments_file).to_crs(bnd_gdf.crs)
-if lineaments_gdf.shape[0] == 0:
-    print(f"ERROR: Lineaments file is empty: {lineaments_file}")
-    exit(1)
-if lineaments_gdf.geometry.type.iloc[0] not in ["LineString", "MultiLineString"]:
-    print(f"ERROR: Lineaments file is not a line: {lineaments_file}")
-    exit(1)
-
-print(
-    f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter()-data_load_t0:.3f}s"
-)
-
-# --- Compute maximum admissible circle radius for the boundary polygon ---
-max_radius = shapely.maximum_inscribed_circle(bnd_gdf.geometry.iloc[0])
-center_coords = list(max_radius.coords)[0]
-center_pt = shapely.geometry.Point(center_coords)
-radius_coords = list(max_radius.coords)[1]
-radius_pt = shapely.geometry.Point(radius_coords)
-max_admissible_radius = max_radius.length
-print(
-    f"Center point of maximum inscribed circle: ({center_pt.x:.2f}, {center_pt.y:.2f})"
-)
-print(
-    f"Radius point of maximum inscribed circle: ({radius_pt.x:.2f}, {radius_pt.y:.2f})"
-)
-print(f"Maximum admissible circle radius: {max_admissible_radius:.2f}")
-
-# --- Plot boundary, max circle, center, and first point ---
-if PLOT_FIGURES:
-    fig_1, ax1 = plt.subplots(figsize=(8, 8))
-    bnd_gdf.plot(ax=ax1, facecolor="none", edgecolor="black", linewidth=1.5)
-    circle_patch = mpl_circle(
-        (center_pt.x, center_pt.y),
-        max_admissible_radius,
-        edgecolor="blue",
-        facecolor="none",
-        linewidth=2,
-        label="Max Admissible Circle",
-    )
-    ax1.plot(center_pt.x, center_pt.y, "o", color="green", markersize=12)
-    ax1.add_patch(circle_patch)
-    legend_handles = [
-        mpl_line([0], [0], color="black", lw=1.5, label="Boundary"),
-        mpl_patch(
-            edgecolor="blue",
-            facecolor="none",
-            linewidth=2,
-            label="Max Admissible Circle",
-        ),
-        mpl_line(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor="green",
-            markersize=12,
-            label="Circle Center",
-        ),
-    ]
-    plt.title("Boundary, Maximum Inscribed Circle, Center, and First Point")
-    plt.legend(handles=legend_handles)
-    plt.axis("equal")
-    plt.tight_layout()
-    fig_path_png = os.path.join(output_folder, "boundary_max_radius_center.png")
-    fig_path_svg = os.path.join(output_folder, "boundary_max_radius_center.svg")
-    fig_1.savefig(fig_path_png, dpi=300)
-    fig_1.savefig(fig_path_svg, format="svg")
-    print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
-
+# --- Load, validate and plot input data ---
+bnd_gdf, lineaments_gdf, max_admissible_radius = load_and_validate_data(boundary_file=boundary_file, lineaments_file=lineaments_file)
 
 # --- Run analysis in parallel ---
 n_cores = max(multiprocessing.cpu_count() - 1, 1)
