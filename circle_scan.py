@@ -136,7 +136,7 @@ def run_iteration(
         circles_gdf = gpd.GeoDataFrame(geometry=[], crs=crs)
         circles_gdf["diameter"] = []
         circles_gdf["area"] = []
-        circles_gdf["iteration_id"] = []
+        circles_gdf["realization_id"] = []
         circles_gdf["circle_id"] = []
         circles_gdf["clipped_length"] = []
         circles_gdf["P21"] = []
@@ -164,7 +164,7 @@ def run_iteration(
         geometry=points_sample.geometry.buffer(circle_diameter/2), crs=crs
     ).reset_index(drop=True)
     circles_gdf["circle_id"] = circles_gdf.index
-    circles_gdf["iteration_id"] = iter_id
+    circles_gdf["realization_id"] = iter_id
 
     # Spatial join of circles with lineaments
     joined = gpd.sjoin(
@@ -208,7 +208,7 @@ def run_iteration(
     circles_gdf["x"] = points_sample.geometry.x
     circles_gdf["y"] = points_sample.geometry.y
 
-    circles_gdf = circles_gdf[["diameter", "area", "iteration_id", "circle_id", "clipped_length", "P21", "x", "y", "geometry"]]
+    circles_gdf = circles_gdf[["diameter", "area", "realization_id", "circle_id", "clipped_length", "P21", "x", "y", "geometry"]]
 
     return circles_gdf
 
@@ -462,7 +462,7 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
     return bnd_gdf, lineaments_gdf, max_admissible_diameter
 
 
-def run_levene_test(areas_gpd=None, diameter_column=None, p21_column=None, alpha=None):
+def run_levene_test(alldata_df=None, diameter_column='diameter', realization_column='realization_id', p21_column='P21', alpha=alpha):
     """
     Perform Levene's test for equality of variances between consecutive radius groups.
 
@@ -474,40 +474,46 @@ def run_levene_test(areas_gpd=None, diameter_column=None, p21_column=None, alpha
 
     Returns:
         DataFrame: A DataFrame with radius pairs, test statistic, p-values, and result interpretation.
+
+    IF NEEDED, TO RUN THIS IN PARALLEL, WE CAN ALTERNATIVELY
+    FIX THE realization TO EQUAL TO A VALUE AND THEN
+    FEED THE FUNCTION TO A PARALLEL LOOP
     """
     rows_levene = []
 
     # Sort the unique radius values
-    radii_sorted = sorted(areas_gpd['radius'].unique())
+    diameter_sorted = sorted(alldata_df[diameter_column].unique())
 
-    for i in range(len(radii_sorted) - 1):
-        r1 = radii_sorted[i]
-        r2 = radii_sorted[i + 1]
+    for dia_idx in range(len(diameter_sorted) - 1):
+        dia_min = diameter_sorted[dia_idx]
+        dia_max = diameter_sorted[dia_idx + 1]
 
-        group1 = areas_gpd[areas_gpd[diameter_column] == r1][p21_column]
-        group2 = areas_gpd[areas_gpd[diameter_column] == r2][p21_column]
+        for realization in alldata_df[realization_column].unique():
+            group1 = alldata_df[(alldata_df[diameter_column] == dia_min) & (alldata_df[realization_column] == realization)][p21_column]
+            group2 = alldata_df[(alldata_df[diameter_column] == dia_max) & (alldata_df[realization_column] == realization)][p21_column]
 
-        stat_levene, p_levene = levene(group1, group2, center='median')
+            stat_levene, p_levene = levene(group1, group2, center='median')
 
-        result = "Different variances" if p_levene < alpha else "No significant difference"
+            result = "Different variances" if p_levene < alpha else "No significant difference"
 
-        rows_levene.append({
-            'r1': r1,
-            'r2': r2,
-            'statistic': stat_levene,
-            'p_value': p_levene,
-            'result': result
-        })
+            rows_levene.append({
+                'dia_min': dia_min,
+                'dia_max': dia_max,
+                'realization': realization,
+                'statistic': stat_levene,
+                'p_value': p_levene,
+                'result': result
+            })
 
-        print(f"Levene test between radius {r1} and {r2}:")
-        print(f"  Statistic = {stat_levene:.4f}, p-value = {p_levene:.4f}")
-        print(f"  Result: {result}")
-        print("-" * 50)
+            print(f"Levene test between diameters {dia_min} and {dia_max}, realization {realization}:")
+            print(f"  Statistic = {stat_levene:.4f}, p-value = {p_levene:.4f}")
+            print(f"  Result: {result}")
+            print("\n")
 
     return pd.DataFrame(rows_levene)
 
 
-def run_shapiro_test(areas_gpd=None, diameter_column=None, p21_column=None, alpha=None):
+def run_shapiro_test(alldata_df=None, diameter_column=None, p21_column=None, alpha=None):
     """
     Perform Shapiro-Wilk test for normality on p21 values for each radius group.
 
@@ -523,10 +529,10 @@ def run_shapiro_test(areas_gpd=None, diameter_column=None, p21_column=None, alph
     rows_shapiro = []
 
     # Sort the unique radius values
-    radii_sorted = sorted(areas_gpd['radius'].unique())
+    diameter_sorted = sorted(alldata_df['radius'].unique())
 
-    for r in radii_sorted:
-        group = areas_gpd[areas_gpd[diameter_column] == r][p21_column]
+    for r in diameter_sorted:
+        group = alldata_df[alldata_df[diameter_column] == r][p21_column]
 
         if len(group) < 3:
             # Shapiro-Wilk requires at least 3 observations
@@ -557,12 +563,12 @@ def run_shapiro_test(areas_gpd=None, diameter_column=None, p21_column=None, alph
     return pd.DataFrame(rows_shapiro)
 
 
-def check_normality_error_variables(areas_gpd=None, diameter_column=None, residuals_column=None, alpha=None):
+def check_normality_error_variables(alldata_df=None, diameter_column=None, residuals_column=None, alpha=None):
     """
     Perform Shapiro-Wilk test for normality on residuals for each radius group.
 
     Parameters:
-        areas_gpd (GeoDataFrame): DataFrame containing residuals and radii.
+        alldata_df (GeoDataFrame): DataFrame containing residuals and radii.
         diameter_column (str): Column name for radii.
         residuals_column (str): Column name for residuals.
         alpha (float): Significance level.
@@ -571,10 +577,10 @@ def check_normality_error_variables(areas_gpd=None, diameter_column=None, residu
         DataFrame: Results with radius, statistic, p-value, and interpretation.
     """
     rows_residuals = []
-    radii_sorted = sorted(areas_gpd[diameter_column].unique())
+    diameter_sorted = sorted(alldata_df[diameter_column].unique())
 
-    for r in radii_sorted:
-        group = areas_gpd[areas_gpd[diameter_column] == r][residuals_column]
+    for r in diameter_sorted:
+        group = alldata_df[alldata_df[diameter_column] == r][residuals_column]
 
         if len(group) < 3:
             rows_residuals.append({
@@ -604,12 +610,12 @@ def check_normality_error_variables(areas_gpd=None, diameter_column=None, residu
     return pd.DataFrame(rows_residuals)
 
 
-def run_anova_test(areas_gpd=None, radius_range=None, diameter_column=None, p21_column=None, alpha=None):
+def run_anova_test(alldata_df=None, radius_range=None, diameter_column=None, p21_column=None, alpha=None):
     """
     Perform one-way ANOVA to test if mean P21 values differ across radius groups.
 
     Parameters:
-        areas_gpd (GeoDataFrame): Input dataframe with P21 values and radius.
+        alldata_df (GeoDataFrame): Input dataframe with P21 values and radius.
         radius_range (tuple): (min_radius, max_radius) to filter the REV range.
         diameter_column (str): Name of the radius column.
         p21_column (str): Name of the P21 value column.
@@ -619,9 +625,9 @@ def run_anova_test(areas_gpd=None, radius_range=None, diameter_column=None, p21_
         DataFrame: A one-row DataFrame with F-statistic, p-value, result label, and tested range.
     """
     min_radius, max_radius = radius_range
-    filtered = areas_gpd[
-        (areas_gpd[diameter_column] >= min_radius) &
-        (areas_gpd[diameter_column] <= max_radius)
+    filtered = alldata_df[
+        (alldata_df[diameter_column] >= min_radius) &
+        (alldata_df[diameter_column] <= max_radius)
     ]
 
     grouped = [group[p21_column].values for _, group in filtered.groupby(diameter_column)]
@@ -681,17 +687,17 @@ all_results = Parallel(n_jobs=n_cores, verbose=5)(
     delayed(process_diameter)(diameter=d, bnd_gdf=bnd_gdf, lineaments_gdf=lineaments_gdf)
     for d in diameter_list
 )
-master_df = pd.concat(all_results, ignore_index=True)
+alldata_df = pd.concat(all_results, ignore_index=True)
 master_csv = os.path.join(
     output_folder, f"circle_p21_alldata_{spacing_type}_spacing.csv"
 )
-master_df.to_csv(master_csv, index=False)
+alldata_df.to_csv(master_csv, index=False)
 print(f"\n🏁 All radii processed. Combined CSV saved to:\n{master_csv}")
 
 # --- Histogram of P21 for each diameter ---
 if PLOT_HISTOGRAMS:
-    for diameter in sorted(master_df["diameter"].unique()):
-        subset = master_df[master_df["diameter"] == diameter]
+    for diameter in sorted(alldata_df["diameter"].unique()):
+        subset = alldata_df[alldata_df["diameter"] == diameter]
         plt.figure(figsize=(8, 6))
         sns.histplot(
             subset["P21"], bins="doane", kde=True, color="royalblue"
@@ -711,11 +717,11 @@ if PLOT_HISTOGRAMS:
         plt.close()
     print("✅ Histograms of P21 saved for all radii.")
 
-# --- Box-and-whisker plot of P21 for all radii ---
+# --- Box-and-whisker plot of P21 for all diameters and realizations ---
 if PLOT_BOXPLOTS:
     fig_2 = plt.figure(figsize=(12, 7))
     sns.boxplot(
-        x="diameter", y="P21", data=master_df, color="lightblue"
+        x="diameter", y="P21", data=alldata_df, color="lightblue"
     )
     plt.title("Box-and-Whisker Plot of P21 by Circle Diameter")
     plt.xlabel("Circle Diameter")
@@ -762,3 +768,23 @@ params_df = pd.DataFrame([params])
 params_csv = os.path.join(output_folder, "circle_p21_analysis_summary.csv")
 params_df.to_csv(params_csv, index=False)
 print(f"✅ Analysis parameters summary saved to: {params_csv}")
+
+# # --- Run Shapiro test ---
+# shapiro_df = run_shapiro_test(alldata_df=alldata_df)
+# shapiro_csv = os.path.join(output_folder, "circle_p21_shapiro_results.csv")
+# shapiro_df.to_csv(shapiro_csv, index=False)
+
+# # --- Run Shapiro residuals test ---
+# shapiro_residuals_df = check_normality_error_variables(alldata_df=alldata_df)
+# shapiro_residuals_csv = os.path.join(output_folder, "circle_p21_shapiro_residuals_results.csv")
+# shapiro_residuals_df.to_csv(shapiro_residuals_csv, index=False)
+
+# --- Run Levene test ---
+levene_df = run_levene_test(alldata_df=alldata_df)
+levene_csv = os.path.join(output_folder, "circle_p21_levene_results.csv")
+levene_df.to_csv(levene_csv, index=False)
+
+# # --- Run ANOVA test ---
+# anova_df = run_anova_test(alldata_df=alldata_df)
+# anova_csv = os.path.join(output_folder, "circle_p21_anova_results.csv")
+# anova_df.to_csv(anova_csv, index=False)
