@@ -358,15 +358,32 @@ if not os.path.exists(boundary_file):
 if not os.path.exists(lineaments_file):
     print(f"ERROR: Lineaments file not found: {lineaments_file}")
     exit(1)
+
 bnd_gdf = gpd.read_file(boundary_file)
+if bnd_gdf.shape[0] == 0:
+    print(f"ERROR: Boundary polygon is empty: {boundary_file}")
+    exit(1)
+if bnd_gdf.shape[0] > 1:
+    print(f"WARNING: Boundary polygon has multiple polygons: {boundary_file}")
+    exit(1)
+if bnd_gdf.geometry.type.iloc[0] != "Polygon":
+    print(f"ERROR: Boundary polygon is not a polygon: {boundary_file}")
+    exit(1)
+
 lineaments_gdf = gpd.read_file(lineaments_file).to_crs(bnd_gdf.crs)
+if lineaments_gdf.shape[0] == 0:
+    print(f"ERROR: Lineaments file is empty: {lineaments_file}")
+    exit(1)
+if lineaments_gdf.geometry.type.iloc[0] not in ["LineString", "MultiLineString"]:
+    print(f"ERROR: Lineaments file is not a line: {lineaments_file}")
+    exit(1)
+
 print(
     f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter()-data_load_t0:.3f}s"
 )
 
 # --- Compute maximum admissible circle radius for the boundary polygon ---
-boundary_poly = bnd_gdf.geometry.iloc[0]
-max_radius = shapely.maximum_inscribed_circle(boundary_poly)
+max_radius = shapely.maximum_inscribed_circle(bnd_gdf.geometry.iloc[0])
 center_coords = list(max_radius.coords)[0]
 center_pt = shapely.geometry.Point(center_coords)
 radius_coords = list(max_radius.coords)[1]
