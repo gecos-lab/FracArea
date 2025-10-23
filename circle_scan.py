@@ -318,8 +318,23 @@ def process_radius(radius=None, bnd_gdf=None, lineaments_gdf=None):
 
 
 def generate_radius_list(
-    radius_min=None, radius_max=None, n_steps=None, spacing_type=None
+    radius_min=None, radius_max=None, n_steps=None, spacing_type=None, max_admissible_radius=None,
 ):
+    """
+    Generates a list of radii based on the given parameters and spacing type. The
+    function allows for 'linear', 'exponential', or 'log' spacing to distribute the
+    radius values. Any radius values that exceed the specified maximum admissible
+    radius are filtered out.
+
+    :param radius_min: The minimum radius value to start from.
+    :param radius_max: The maximum radius value to end on.
+    :param n_steps: The number of steps or intervals for dividing the range.
+    :param spacing_type: The spacing method to use; options are 'linear',
+        'exponential', or 'log'.
+    :param max_admissible_radius: The maximum allowable radius value; any
+        values above this will be excluded.
+    :return: A list of radius values distributed as per the specified spacing type.
+    """
     if spacing_type == "linear":
         radius_list = np.linspace(radius_min, radius_max, n_steps)
     elif spacing_type == "exponential":
@@ -331,12 +346,27 @@ def generate_radius_list(
             "Invalid spacing_type: choose 'linear', 'exponential', or 'log'"
         )
 
+    radius_list = [r for r in radius_list if r <= max_admissible_radius]
     print(f"Radii to process ({spacing_type} spacing): {np.round(radius_list, 2)}")
 
     return radius_list
 
 
 def load_and_validate_data(boundary_file=None, lineaments_file=None):
+    """
+    Loads and validates geographical data consisting of boundary polygons and lineament lines.
+    The function performs the following:
+    - Validates the file paths for both boundary and lineament data.
+    - Reads and checks the validity of boundary polygon(s), ensuring it contains only one valid polygon.
+    - Reads and checks the validity of lineaments, ensuring they are line geometries with a compatible CRS.
+    - Computes the maximum inscribed circle for the boundary polygon and its associated properties.
+    - Optionally visualizes and saves plots of the boundary polygon, circle, center point, and other related features.
+
+    :param boundary_file: Path to the boundary file to validate and analyze.
+    :param lineaments_file: Path to the lineaments file to validate and analyze.
+    :return: Tuple containing boundary geodataframe, lineaments geodataframe, and maximum admissible radius.
+    :rtype: tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, float]
+    """
     # --- Load Data ---
     data_load_t0 = time.perf_counter()
     if not os.path.exists(boundary_file):
@@ -428,11 +458,17 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
 
     return bnd_gdf, lineaments_gdf, max_admissible_radius
 
+
 #################################################################################################
 # Main script execution starts here
 
 # --- Create output folder ---
 output_folder = get_next_output_folder(base_folder=input_folder)
+
+# --- Load, validate and plot input data ---
+bnd_gdf, lineaments_gdf, max_admissible_radius = load_and_validate_data(
+    boundary_file=boundary_file, lineaments_file=lineaments_file
+)
 
 # --- Compute radius list ---
 radius_list = generate_radius_list(
@@ -440,10 +476,8 @@ radius_list = generate_radius_list(
     radius_max=radius_max,
     n_steps=n_steps,
     spacing_type=spacing_type,
+    max_admissible_radius=max_admissible_radius,
 )
-
-# --- Load, validate and plot input data ---
-bnd_gdf, lineaments_gdf, max_admissible_radius = load_and_validate_data(boundary_file=boundary_file, lineaments_file=lineaments_file)
 
 # --- Run analysis in parallel ---
 n_cores = max(multiprocessing.cpu_count() - 1, 1)
