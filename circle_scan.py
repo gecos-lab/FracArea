@@ -1,5 +1,5 @@
 """circle_scan.py
-Multi-Radius Monte Carlo Circular Scan-Area Sampling
+Multi-Diameter Monte Carlo Circular Scan-Area Sampling
 FracArea© Andrea Bistacchi
 """
 
@@ -24,16 +24,16 @@ from datetime import datetime
 analysis_start_time = time.time()
 
 # --- Runtime options ---
-PLOT_FIGURES = True  # Set True to generate per-radius maps
-PLOT_HISTOGRAMS = True  # Set True to generate per-radius histograms
+PLOT_FIGURES = True  # Set True to generate per-diameter maps
+PLOT_HISTOGRAMS = True  # Set True to generate per-diameter histograms
 PLOT_BOXPLOTS = True  # Set True to generate summary box/line plots
 
 # --- Base analysis parameters TEST ---
-n_iterations = 100  # Monte Carlo iterations per radius
+n_iterations = 100  # Monte Carlo iterations per diameter
 n_points_target = 100  # Circles per iteration
-radius_min = 5000  # Minimum circle radius
-radius_max = 60000  # Maximum circle radius
-n_steps = 12  # Number of radii
+diameter_min = 10000  # Minimum circle diameter
+diameter_max = 100000  # Maximum circle diameter
+n_steps = 10  # Number of radii
 spacing_type = "linear"  # Options: "linear", "exponential", "log"
 
 # --- Locate input folder and files TEST ---
@@ -42,10 +42,10 @@ boundary_file = os.path.join(input_folder, "boundary.shp")
 lineaments_file = os.path.join(input_folder, "lineaments.shp")
 
 # # --- Base analysis parameters PONTRELLI ---
-# n_iterations = 100          # Monte Carlo iterations per radius
+# n_iterations = 100          # Monte Carlo iterations per diameter
 # n_points_target = 100       # Circles per iteration
-# radius_min = 1              # Minimum circle radius
-# radius_max = 26             # Maximum circle radius
+# diameter_min = 2              # Minimum circle diameter
+# diameter_max = 50             # Maximum circle diameter
 # n_steps = 26                 # Number of radii
 # spacing_type = "linear"  # Options: "linear", "exponential", "log"
 #
@@ -96,7 +96,7 @@ def run_iteration(
     inner_poly=None,
     lineaments_gdf=None,
     n_points_target=None,
-    circle_radius=None,
+    circle_diameter=None,
     crs=None,
 ):
     """
@@ -112,8 +112,8 @@ def run_iteration(
     :type lineaments_gdf: geopandas.GeoDataFrame
     :param n_points_target: The target number of random points to generate within the inner polygon.
     :type n_points_target: int
-    :param circle_radius: The radius of the circles to be created around sampled points.
-    :type circle_radius: float
+    :param circle_diameter: The diameter of the circles to be created around sampled points.
+    :type circle_diameter: float
     :param crs: The coordinate reference system (CRS) used for the generated GeoDataFrame objects.
     :type crs: str or pyproj.CRS
 
@@ -134,9 +134,9 @@ def run_iteration(
         circles_gdf["circle_id"] = []
         circles_gdf["iteration_id"] = []
         circles_gdf["clipped_length"] = []
-        circles_gdf["radius"] = []
+        circles_gdf["diameter"] = []
         circles_gdf["area"] = []
-        circles_gdf["length_per_area"] = []
+        circles_gdf["P21"] = []
         circles_gdf["x"] = []
         circles_gdf["y"] = []
         # circles_gdf["inside_outer"] = []
@@ -157,9 +157,9 @@ def run_iteration(
         n_points_target, random_state=None
     ).reset_index(drop=True)
 
-    # Circles
+    # Create circles with a given diameter, using a buffer of diameter/2 to create a circle around each point.
     circles_gdf = gpd.GeoDataFrame(
-        geometry=points_sample.geometry.buffer(circle_radius), crs=crs
+        geometry=points_sample.geometry.buffer(circle_diameter/2), crs=crs
     ).reset_index(drop=True)
     circles_gdf["circle_id"] = circles_gdf.index
     circles_gdf["iteration_id"] = iter_id
@@ -172,9 +172,9 @@ def run_iteration(
     # If no lineaments intersect any circles, return circles_gdf with zero clipped_length
     if joined.empty:
         circles_gdf["clipped_length"] = 0
-        circles_gdf["radius"] = circle_radius
+        circles_gdf["diameter"] = circle_diameter
         circles_gdf["area"] = circles_gdf.geometry.area
-        circles_gdf["length_per_area"] = 0
+        circles_gdf["P21"] = 0
         circles_gdf["x"] = points_sample.geometry.x
         circles_gdf["y"] = points_sample.geometry.y
         return circles_gdf
@@ -200,17 +200,17 @@ def run_iteration(
     )
     circles_gdf = circles_gdf.merge(lengths_per_circle, on="circle_id", how="left")
     circles_gdf["clipped_length"] = circles_gdf["clipped_length"].fillna(0)
-    circles_gdf["radius"] = circle_radius
+    circles_gdf["diameter"] = circle_diameter
     circles_gdf["area"] = circles_gdf.geometry.area
-    circles_gdf["length_per_area"] = circles_gdf["clipped_length"] / circles_gdf["area"]
+    circles_gdf["P21"] = circles_gdf["clipped_length"] / circles_gdf["area"]
     circles_gdf["x"] = points_sample.geometry.x
     circles_gdf["y"] = points_sample.geometry.y
     return circles_gdf
 
 
-def process_radius(radius=None, bnd_gdf=None, lineaments_gdf=None):
+def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
     """
-    Processes the given radius by performing several operations including
+    Processes the given diameter by performing several operations including
     polygon buffering, data concatenation, and file saving. Iterations are
     conducted to compute results, stored in a geodataframe, which gets saved
     to a CSV file. Optionally, plots can be generated for visualization if
@@ -218,19 +218,19 @@ def process_radius(radius=None, bnd_gdf=None, lineaments_gdf=None):
 
     :param bnd_gdf:
     :param lineaments_gdf:
-    :param radius: The radius value (in meters) to process.
-    :type radius: float
-    :return: Geodataframe containing the results for the given radius.
+    :param diameter: The diameter value (in meters) to process.
+    :type diameter: float
+    :return: Geodataframe containing the results for the given diameter.
     :rtype: geopandas.GeoDataFrame
     """
-    print(f"\n▶️ Radius = {radius:.2f}")
+    print(f"\n▶️ Diameter = {diameter:.2f}")
     t0 = time.perf_counter()
-    buffer_distance = -radius
+    buffer_distance = -diameter/2
 
-    # Inner polygon for this radius (do not mutate bnd_gdf)
+    # Inner polygon for this diameter (do not mutate bnd_gdf)
     inner_poly = bnd_gdf.geometry.buffer(buffer_distance).union_all()
 
-    # Run all iterations (sequential within this radius)
+    # Run all iterations (sequential within this diameter)
     iter_t0 = time.perf_counter()
     results_list = []
     for i in range(1, n_iterations + 1):
@@ -239,117 +239,119 @@ def process_radius(radius=None, bnd_gdf=None, lineaments_gdf=None):
             inner_poly=inner_poly,
             lineaments_gdf=lineaments_gdf,
             n_points_target=n_points_target,
-            circle_radius=radius,
+            circle_diameter=diameter,
             crs=bnd_gdf.crs,
         )
-        result["radius_tested"] = radius
+        result["diameter_tested"] = diameter
         results_list.append(result)
         last_iteration_result = result
     print(f"  Iterations done in {time.perf_counter()-iter_t0:.3f}s")
 
-    # Combine iterations for this radius
+    # Combine iterations for this diameter
     concat_t0 = time.perf_counter()
     results_gdf = pd.concat(results_list, ignore_index=True)
     print(f"  Concatenation in {time.perf_counter()-concat_t0:.3f}s")
 
     # Save CSV
     csv_t0 = time.perf_counter()
-    csv_path = os.path.join(output_folder, f"circle_density_r{radius:.2f}.csv")
+    csv_path = os.path.join(output_folder, f"circle_density_r{diameter:.2f}.csv")
     results_gdf.drop(columns="geometry").to_csv(csv_path, index=False)
     print(f"  CSV written in {time.perf_counter()-csv_t0:.3f}s")
 
     if PLOT_FIGURES:
-        # Plot colored by length_per_area
+        # Plot colored by P21
         fig, ax = plt.subplots(figsize=(8, 8))
         bnd_gdf.plot(
             ax=ax,
             facecolor="none",
             edgecolor="black",
             linewidth=1.2,
-            label="Outer Polygon",
+            label="Boundary",
         )
         gpd.GeoSeries(inner_poly).plot(
             ax=ax,
             facecolor="none",
             edgecolor="red",
             linestyle="--",
-            label="Inner Polygon",
+            label="Buffer",
         )
         lineaments_gdf.plot(ax=ax, color="gray", linewidth=0.5, label="Lineaments")
         last_iteration_result.plot(
             ax=ax,
-            column="length_per_area",
+            column="P21",
             cmap="viridis",
             legend=True,
             alpha=0.6,
             edgecolor="black",
             linewidth=0.3,
+            label="Circles",
+            # legend_kwds={"label": "P21", "orientation": "vertical"}
         )
         # Custom legend handles
         legend_handles = [
-            mpl_line([0], [0], color="black", lw=1.2, label="Outer Polygon"),
+            mpl_line([0], [0], color="black", lw=1.2, label="Boundary"),
             mpl_line(
-                [0], [0], color="red", lw=1.2, linestyle="--", label="Inner Polygon"
+                [0], [0], color="red", lw=1.2, linestyle="--", label="Buffer"
             ),
             mpl_line([0], [0], color="gray", lw=0.5, label="Lineaments"),
             mpl_patch(
                 edgecolor="black",
                 facecolor="none",
                 linewidth=0.3,
-                label="Circle (length_per_area)",
+                label="Circular scanareas",
             ),
         ]
-        plt.title(f"Radius = {radius:.2f} m — Last Iteration (Colored by Density)")
+        plt.title(f"Diameter = {diameter:.2f} m — Circular scanareas from last Iteration colored by P21")
         plt.legend(handles=legend_handles)
         plt.axis("equal")
         plt.tight_layout()
 
         # Save figures
-        fig_path_png = os.path.join(output_folder, f"figure_r{radius:.2f}.png")
-        fig_path_svg = os.path.join(output_folder, f"figure_r{radius:.2f}.svg")
+        fig_path_png = os.path.join(output_folder, f"figure_r{diameter:.2f}.png")
+        fig_path_svg = os.path.join(output_folder, f"figure_r{diameter:.2f}.svg")
         fig.savefig(fig_path_png, dpi=300)
         fig.savefig(fig_path_svg, format="svg")
         plt.close()
-        print(f"  Figures saved in radius loop")
+        print(f"  Figures saved in diameter loop")
 
-    print(f"✅ Saved CSV for radius {radius:.2f} (total {time.perf_counter()-t0:.3f}s)")
+    print(f"✅ Saved CSV for diameter {diameter:.2f} (total {time.perf_counter()-t0:.3f}s)")
 
     return results_gdf
 
 
-def generate_radius_list(
-    radius_min=None, radius_max=None, n_steps=None, spacing_type=None, max_admissible_radius=None,
+def generate_diameter_list(
+    diameter_min=None, diameter_max=None, n_steps=None, spacing_type=None, max_admissible_diameter=None,
 ):
     """
     Generates a list of radii based on the given parameters and spacing type. The
     function allows for 'linear', 'exponential', or 'log' spacing to distribute the
-    radius values. Any radius values that exceed the specified maximum admissible
-    radius are filtered out.
+    diameter values. Any diameter values that exceed the specified maximum admissible
+    diameter are filtered out.
 
-    :param radius_min: The minimum radius value to start from.
-    :param radius_max: The maximum radius value to end on.
+    :param diameter_min: The minimum diameter value to start from.
+    :param diameter_max: The maximum diameter value to end on.
     :param n_steps: The number of steps or intervals for dividing the range.
     :param spacing_type: The spacing method to use; options are 'linear',
         'exponential', or 'log'.
-    :param max_admissible_radius: The maximum allowable radius value; any
+    :param max_admissible_diameter: The maximum allowable diameter value; any
         values above this will be excluded.
-    :return: A list of radius values distributed as per the specified spacing type.
+    :return: A list of diameter values distributed as per the specified spacing type.
     """
     if spacing_type == "linear":
-        radius_list = np.linspace(radius_min, radius_max, n_steps)
+        diameter_list = np.linspace(diameter_min, diameter_max, n_steps)
     elif spacing_type == "exponential":
-        radius_list = np.geomspace(radius_min, radius_max, n_steps)
+        diameter_list = np.geomspace(diameter_min, diameter_max, n_steps)
     elif spacing_type == "log":
-        radius_list = np.logspace(np.log10(radius_min), np.log10(radius_max), n_steps)
+        diameter_list = np.logspace(np.log10(diameter_min), np.log10(diameter_max), n_steps)
     else:
         raise ValueError(
             "Invalid spacing_type: choose 'linear', 'exponential', or 'log'"
         )
 
-    radius_list = [r for r in radius_list if r <= max_admissible_radius]
-    print(f"Radii to process ({spacing_type} spacing): {np.round(radius_list, 2)}")
+    diameter_list = [d for d in diameter_list if d <= max_admissible_diameter]
+    print(f"Diameters to process ({spacing_type} spacing): {np.round(diameter_list, 2)}")
 
-    return radius_list
+    return diameter_list
 
 
 def load_and_validate_data(boundary_file=None, lineaments_file=None):
@@ -364,7 +366,7 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
 
     :param boundary_file: Path to the boundary file to validate and analyze.
     :param lineaments_file: Path to the lineaments file to validate and analyze.
-    :return: Tuple containing boundary geodataframe, lineaments geodataframe, and maximum admissible radius.
+    :return: Tuple containing boundary geodataframe, lineaments geodataframe, and maximum admissible diameter.
     :rtype: tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, float]
     """
     # --- Load Data ---
@@ -399,20 +401,20 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
         f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter() - data_load_t0:.3f}s"
     )
 
-    # --- Compute maximum admissible circle radius for the boundary polygon ---
-    max_radius = shapely.maximum_inscribed_circle(bnd_gdf.geometry.iloc[0])
-    center_coords = list(max_radius.coords)[0]
+    # --- Compute maximum admissible circle diameter for the boundary polygon ---
+    max_circle = shapely.maximum_inscribed_circle(bnd_gdf.geometry.iloc[0]) #########################
+    center_coords = list(max_circle.coords)[0]
     center_pt = shapely.geometry.Point(center_coords)
-    radius_coords = list(max_radius.coords)[1]
-    radius_pt = shapely.geometry.Point(radius_coords)
-    max_admissible_radius = max_radius.length
+    diameter_coords = list(max_circle.coords)[1]
+    diameter_pt = shapely.geometry.Point(diameter_coords)
+    max_admissible_diameter = max_circle.length*2
     print(
         f"Center point of maximum inscribed circle: ({center_pt.x:.2f}, {center_pt.y:.2f})"
     )
     print(
-        f"Radius point of maximum inscribed circle: ({radius_pt.x:.2f}, {radius_pt.y:.2f})"
+        f"Circle point of maximum inscribed circle: ({diameter_pt.x:.2f}, {diameter_pt.y:.2f})"
     )
-    print(f"Maximum admissible circle radius: {max_admissible_radius:.2f}")
+    print(f"Maximum admissible circle diameter: {max_admissible_diameter:.2f}")
 
     # --- Plot boundary, max circle, center, and first point ---
     if PLOT_FIGURES:
@@ -420,7 +422,7 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
         bnd_gdf.plot(ax=ax1, facecolor="none", edgecolor="black", linewidth=1.5)
         circle_patch = mpl_circle(
             (center_pt.x, center_pt.y),
-            max_admissible_radius,
+            max_admissible_diameter/2,
             edgecolor="blue",
             facecolor="none",
             linewidth=2,
@@ -450,13 +452,13 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
         plt.legend(handles=legend_handles)
         plt.axis("equal")
         plt.tight_layout()
-        fig_path_png = os.path.join(output_folder, "boundary_max_radius_center.png")
-        fig_path_svg = os.path.join(output_folder, "boundary_max_radius_center.svg")
+        fig_path_png = os.path.join(output_folder, "boundary_max_circle_center.png")
+        fig_path_svg = os.path.join(output_folder, "boundary_max_circle_center.svg")
         fig_1.savefig(fig_path_png, dpi=300)
         fig_1.savefig(fig_path_svg, format="svg")
         print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
 
-    return bnd_gdf, lineaments_gdf, max_admissible_radius
+    return bnd_gdf, lineaments_gdf, max_admissible_diameter
 
 
 #################################################################################################
@@ -466,17 +468,17 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
 output_folder = get_next_output_folder(base_folder=input_folder)
 
 # --- Load, validate and plot input data ---
-bnd_gdf, lineaments_gdf, max_admissible_radius = load_and_validate_data(
+bnd_gdf, lineaments_gdf, max_admissible_diameter = load_and_validate_data(
     boundary_file=boundary_file, lineaments_file=lineaments_file
 )
 
-# --- Compute radius list ---
-radius_list = generate_radius_list(
-    radius_min=radius_min,
-    radius_max=radius_max,
+# --- Compute diameter list ---
+diameter_list = generate_diameter_list(
+    diameter_min=diameter_min,
+    diameter_max=diameter_max,
     n_steps=n_steps,
     spacing_type=spacing_type,
-    max_admissible_radius=max_admissible_radius,
+    max_admissible_diameter=max_admissible_diameter,
 )
 
 # --- Run analysis in parallel ---
@@ -484,8 +486,8 @@ n_cores = max(multiprocessing.cpu_count() - 1, 1)
 print(f"Using {n_cores} CPU cores for parallel execution.")
 
 all_results = Parallel(n_jobs=n_cores, verbose=5)(
-    delayed(process_radius)(radius=r, bnd_gdf=bnd_gdf, lineaments_gdf=lineaments_gdf)
-    for r in radius_list
+    delayed(process_diameter)(diameter=d, bnd_gdf=bnd_gdf, lineaments_gdf=lineaments_gdf)
+    for d in diameter_list
 )
 master_df = pd.concat(all_results, ignore_index=True)
 master_csv = os.path.join(
@@ -494,46 +496,46 @@ master_csv = os.path.join(
 master_df.drop(columns="geometry").to_csv(master_csv, index=False)
 print(f"\n🏁 All radii processed. Combined CSV saved to:\n{master_csv}")
 
-# --- Histogram of length_per_area for each radius ---
+# --- Histogram of P21 for each diameter ---
 if PLOT_HISTOGRAMS:
-    for radius in sorted(master_df["radius_tested"].unique()):
-        subset = master_df[master_df["radius_tested"] == radius]
+    for diameter in sorted(master_df["diameter_tested"].unique()):
+        subset = master_df[master_df["diameter_tested"] == diameter]
         plt.figure(figsize=(8, 6))
         sns.histplot(
-            subset["length_per_area"], bins="doane", kde=True, color="royalblue"
+            subset["P21"], bins="doane", kde=True, color="royalblue"
         )
-        plt.title(f"Histogram of length_per_area for radius {radius:.2f}")
-        plt.xlabel("length_per_area")
+        plt.title(f"Histogram of P21 for diameter {diameter:.2f}")
+        plt.xlabel("P21")
         plt.ylabel("Count")
         plt.tight_layout()
         hist_png = os.path.join(
-            output_folder, f"histogram_length_per_area_r{radius:.2f}.png"
+            output_folder, f"histogram_P21_r{diameter:.2f}.png"
         )
         hist_svg = os.path.join(
-            output_folder, f"histogram_length_per_area_r{radius:.2f}.svg"
+            output_folder, f"histogram_P21_r{diameter:.2f}.svg"
         )
         plt.savefig(hist_png, dpi=300)
         plt.savefig(hist_svg, format="svg")
         plt.close()
-    print("✅ Histograms of length_per_area saved for all radii.")
+    print("✅ Histograms of P21 saved for all radii.")
 
-# --- Box-and-whisker plot of length_per_area for all radii ---
+# --- Box-and-whisker plot of P21 for all radii ---
 if PLOT_BOXPLOTS:
     fig_2 = plt.figure(figsize=(12, 7))
     sns.boxplot(
-        x="radius_tested", y="length_per_area", data=master_df, color="lightblue"
+        x="diameter_tested", y="P21", data=master_df, color="lightblue"
     )
-    plt.title("Box-and-Whisker Plot of length_per_area by Circle Radius")
-    plt.xlabel("Circle Radius")
-    plt.ylabel("length_per_area")
+    plt.title("Box-and-Whisker Plot of P21 by Circle Diameter")
+    plt.xlabel("Circle Diameter")
+    plt.ylabel("P21")
     plt.xticks(rotation=45)
     plt.tight_layout()
-    boxplot_png = os.path.join(output_folder, "boxplot_length_per_area_by_radius.png")
-    boxplot_svg = os.path.join(output_folder, "boxplot_length_per_area_by_radius.svg")
+    boxplot_png = os.path.join(output_folder, "boxplot_P21_by_diameter.png")
+    boxplot_svg = os.path.join(output_folder, "boxplot_P21_by_diameter.svg")
     fig_2.savefig(boxplot_png, dpi=300)
     fig_2.savefig(boxplot_svg, format="svg")
     plt.close()
-    print("✅ Box-and-whisker plot of length_per_area by radius saved as PNG and SVG.")
+    print("✅ Box-and-whisker plot of P21 by diameter saved as PNG and SVG.")
 
 # --- Stop timer ---
 analysis_end_time = time.time()
@@ -555,13 +557,13 @@ params = {
     "lineaments_file": lineaments_file,
     "n_iterations": n_iterations,
     "n_points_target": n_points_target,
-    "radius_min": radius_min,
-    "radius_max": radius_max,
+    "diameter_min": diameter_min,
+    "diameter_max": diameter_max,
     "n_steps": n_steps,
     "spacing_type": spacing_type,
-    "radius_list": list(np.round(radius_list, 2)),
+    "diameter_list": list(np.round(diameter_list, 2)),
     "n_cores": n_cores,
-    "max_admissible_radius": max_admissible_radius,
+    "max_admissible_diameter": max_admissible_diameter,
     "analysis_time_seconds": round(elapsed_seconds, 2),
 }
 params_df = pd.DataFrame([params])
