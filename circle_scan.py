@@ -259,12 +259,6 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
     results_gdf = pd.concat(results_list, ignore_index=True)
     print(f"  Concatenation in {time.perf_counter()-concat_t0:.3f}s")
 
-    # Save CSV
-    csv_t0 = time.perf_counter()
-    csv_path = os.path.join(output_folder, f"circle_density_r{diameter:.2f}.csv")
-    results_gdf.to_csv(csv_path, index=False)
-    print(f"  CSV written in {time.perf_counter()-csv_t0:.3f}s")
-
     if PLOT_FIGURES:
         # Plot colored by P21
         fig, ax = plt.subplots(figsize=(8, 8))
@@ -314,8 +308,8 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
         plt.tight_layout()
 
         # Save figures
-        fig_path_png = os.path.join(output_folder, f"figure_r{diameter:.2f}.png")
-        fig_path_svg = os.path.join(output_folder, f"figure_r{diameter:.2f}.svg")
+        fig_path_png = os.path.join(output_folder, f"map_scanareas_d{diameter:.2f}.png")
+        fig_path_svg = os.path.join(output_folder, f"map_scanareas_d{diameter:.2f}.svg")
         fig.savefig(fig_path_png, dpi=300)
         fig.savefig(fig_path_svg, format="svg")
         plt.close()
@@ -459,8 +453,8 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
         plt.legend(handles=legend_handles)
         plt.axis("equal")
         plt.tight_layout()
-        fig_path_png = os.path.join(output_folder, "boundary_max_circle_center.png")
-        fig_path_svg = os.path.join(output_folder, "boundary_max_circle_center.svg")
+        fig_path_png = os.path.join(output_folder, "boundary_max_circle.png")
+        fig_path_svg = os.path.join(output_folder, "boundary_max_circle.svg")
         fig_1.savefig(fig_path_png, dpi=300)
         fig_1.savefig(fig_path_svg, format="svg")
         print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
@@ -689,7 +683,7 @@ all_results = Parallel(n_jobs=n_cores, verbose=5)(
 )
 master_df = pd.concat(all_results, ignore_index=True)
 master_csv = os.path.join(
-    output_folder, f"circle_density_ALL_{spacing_type}_spacing.csv"
+    output_folder, f"circle_p21_alldata_{spacing_type}_spacing.csv"
 )
 master_df.to_csv(master_csv, index=False)
 print(f"\n🏁 All radii processed. Combined CSV saved to:\n{master_csv}")
@@ -707,10 +701,10 @@ if PLOT_HISTOGRAMS:
         plt.ylabel("Count")
         plt.tight_layout()
         hist_png = os.path.join(
-            output_folder, f"histogram_P21_r{diameter:.2f}.png"
+            output_folder, f"histogram_P21_d{diameter:.2f}.png"
         )
         hist_svg = os.path.join(
-            output_folder, f"histogram_P21_r{diameter:.2f}.svg"
+            output_folder, f"histogram_P21_d{diameter:.2f}.svg"
         )
         plt.savefig(hist_png, dpi=300)
         plt.savefig(hist_svg, format="svg")
@@ -765,6 +759,6 @@ params = {
     "analysis_time_seconds": round(elapsed_seconds, 2),
 }
 params_df = pd.DataFrame([params])
-params_csv = os.path.join(output_folder, "analysis_parameters_summary.csv")
+params_csv = os.path.join(output_folder, "circle_p21_analysis_summary.csv")
 params_df.to_csv(params_csv, index=False)
 print(f"✅ Analysis parameters summary saved to: {params_csv}")
