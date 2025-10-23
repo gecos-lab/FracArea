@@ -20,6 +20,7 @@ import re
 import seaborn as sns
 import time
 from datetime import datetime
+# import imageio as iio
 
 # --- Start timing ---
 analysis_start_time = time.time()
@@ -28,34 +29,39 @@ analysis_start_time = time.time()
 PLOT_FIGURES = True  # Set True to generate per-diameter maps
 PLOT_HISTOGRAMS = True  # Set True to generate per-diameter histograms
 PLOT_BOXPLOTS = True  # Set True to generate summary box/line plots
+CREATE_GIFS = True  # Set True to create GIFs from per-diameter maps and histograms
 
 alpha = 0.05  # Significance level for statistical tests
 
-# --- Base analysis parameters TEST ---
-n_iterations = 100  # Monte Carlo iterations per diameter
-n_points_target = 100  # Circles per iteration
-diameter_min = 10000  # Minimum circle diameter
-diameter_max = 100000  # Maximum circle diameter
-n_steps = 10  # Number of radii
-spacing_type = "linear"  # Options: "linear", "exponential", "log"
-
-# --- Locate input folder and files TEST ---
-input_folder = "data_test"
-boundary_file = os.path.join(input_folder, "boundary.shp")
-lineaments_file = os.path.join(input_folder, "lineaments.shp")
-
-# # --- Base analysis parameters PONTRELLI ---
-# n_iterations = 100          # Monte Carlo iterations per diameter
-# n_points_target = 100       # Circles per iteration
-# diameter_min = 2              # Minimum circle diameter
-# diameter_max = 50             # Maximum circle diameter
-# n_steps = 26                 # Number of radii
+# # --- Base analysis parameters TEST ---
+# n_iterations = 100  # Monte Carlo iterations per diameter
+# n_points_target = 100  # Circles per iteration
+# diameter_min = 10000  # Minimum circle diameter
+# diameter_max = 100000  # Maximum circle diameter
+# n_steps = 10  # Number of radii
 # spacing_type = "linear"  # Options: "linear", "exponential", "log"
+# anova_diameter_min = 40000
+# anova_diameter_max = 80000
 #
-# # --- Locate input folder and files PONTRELLI ---
-# input_folder = "data_pontrelli"
-# boundary_file = os.path.join(input_folder, "Interpretation-boundary.shp")
-# lineaments_file = os.path.join(input_folder, "FN_set_1.shp")
+# # --- Locate input folder and files TEST ---
+# input_folder = "data_test"
+# boundary_file = os.path.join(input_folder, "boundary.shp")
+# lineaments_file = os.path.join(input_folder, "lineaments.shp")
+
+# --- Base analysis parameters PONTRELLI ---
+n_iterations = 100          # Monte Carlo iterations per diameter
+n_points_target = 100       # Circles per iteration
+diameter_min = 2              # Minimum circle diameter
+diameter_max = 50             # Maximum circle diameter
+n_steps = 49                 # Number of radii
+spacing_type = "linear"  # Options: "linear", "exponential", "log"
+anova_diameter_min = 7
+anova_diameter_max = 10
+
+# --- Locate input folder and files PONTRELLI ---
+input_folder = "data_pontrelli"
+boundary_file = os.path.join(input_folder, "Interpretation-boundary.shp")
+lineaments_file = os.path.join(input_folder, "FN_set_1.shp")
 
 
 #################################################################################################
@@ -139,9 +145,9 @@ def run_iteration(
         circles_gdf["realization_id"] = []
         circles_gdf["circle_id"] = []
         circles_gdf["clipped_length"] = []
-        circles_gdf["P21"] = []
         circles_gdf["x"] = []
         circles_gdf["y"] = []
+        circles_gdf["P21"] = []
         return circles_gdf
 
     n_points_to_generate = (
@@ -176,9 +182,9 @@ def run_iteration(
         circles_gdf["diameter"] = circle_diameter
         circles_gdf["area"] = circles_gdf.geometry.area
         circles_gdf["clipped_length"] = 0
-        circles_gdf["P21"] = 0
         circles_gdf["x"] = points_sample.geometry.x
         circles_gdf["y"] = points_sample.geometry.y
+        circles_gdf["P21"] = 0
         return circles_gdf
 
     # Vectorized intersection and length using Shapely 2.0 APIs
@@ -204,9 +210,9 @@ def run_iteration(
     circles_gdf["diameter"] = circle_diameter
     circles_gdf["area"] = circles_gdf.geometry.area
     circles_gdf["clipped_length"] = circles_gdf["clipped_length"].fillna(0)
-    circles_gdf["P21"] = circles_gdf["clipped_length"] / circles_gdf["area"]
     circles_gdf["x"] = points_sample.geometry.x
     circles_gdf["y"] = points_sample.geometry.y
+    circles_gdf["P21"] = circles_gdf["clipped_length"] / circles_gdf["area"]
 
     circles_gdf = circles_gdf[
         [
@@ -215,9 +221,9 @@ def run_iteration(
             "realization_id",
             "circle_id",
             "clipped_length",
-            "P21",
             "x",
             "y",
+            "P21",
             "geometry",
         ]
     ]
@@ -225,7 +231,7 @@ def run_iteration(
     return circles_gdf
 
 
-def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
+def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None, map_figs_list=None):
     """
     Processes the given diameter by performing several operations including
     polygon buffering, data concatenation, and file saving. Iterations are
@@ -265,6 +271,7 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
         result.drop(
             ["geometry", "area", "circle_id", "clipped_length"], axis=1, inplace=True
         )
+        result['residuals'] = result['P21'] - result.groupby('diameter')['P21'].transform('mean')
         results_list.append(result)
     print(f"  Iterations done in {time.perf_counter()-iter_t0:.3f}s")
 
@@ -317,7 +324,7 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
         plt.title(
             f"Diameter = {diameter:.2f} m — Circular scanareas from last Iteration colored by P21"
         )
-        plt.legend(handles=legend_handles)
+        plt.legend(handles=legend_handles, loc="upper left")
         plt.axis("equal")
         plt.tight_layout()
 
@@ -511,7 +518,6 @@ def run_levene_test(
     """
     rows_levene = []
 
-    # Sort the unique radius values
     diameter_sorted = sorted(alldata_df[diameter_column].unique())
 
     for dia_idx in range(len(diameter_sorted) - 1):
@@ -582,7 +588,6 @@ def run_shapiro_test(
     """
     rows_shapiro = []
 
-    # Sort the unique radius values
     diameter_sorted = sorted(alldata_df[diameter_column].unique())
 
     for dia in diameter_sorted:
@@ -632,71 +637,89 @@ def run_shapiro_test(
 
 
 def check_normality_error_variables(
-    alldata_df=None, diameter_column=None, residuals_column=None, alpha=None
+        alldata_df=None,
+        diameter_column="diameter",
+        realization_column="realization_id",
+        residuals_column="residuals",
+        alpha=alpha,
 ):
     """
     Perform Shapiro-Wilk test for normality on residuals for each radius group.
 
     Parameters:
-        alldata_df (GeoDataFrame): DataFrame containing residuals and radii.
+        alldata_df (DataFrame): DataFrame containing residuals and radii.
         diameter_column (str): Column name for radii.
         residuals_column (str): Column name for residuals.
         alpha (float): Significance level.
 
     Returns:
         DataFrame: Results with radius, statistic, p-value, and interpretation.
+
+    IF NEEDED, TO RUN THIS IN PARALLEL, WE CAN ALTERNATIVELY
+    FIX THE realization TO EQUAL TO A VALUE AND THEN
+    FEED THE FUNCTION TO A PARALLEL LOOP
     """
     rows_residuals = []
+
     diameter_sorted = sorted(alldata_df[diameter_column].unique())
 
-    for r in diameter_sorted:
-        group = alldata_df[alldata_df[diameter_column] == r][residuals_column]
+    for dia in diameter_sorted:
+        for realization in alldata_df[realization_column].unique():
+            group = alldata_df[
+                (alldata_df[diameter_column] == dia)
+                & (alldata_df[realization_column] == realization)
+                ][residuals_column]
 
-        if len(group) < 3:
+            if len(group) < 3:
+                # Shapiro-Wilk requires at least 3 observations
+                rows_residuals.append(
+                    {
+                        "dia": dia,
+                        "realization": realization,
+                        "statistic": None,
+                        "p_value": None,
+                        "result": "Too few samples",
+                    }
+                )
+                print(f"Diameter {dia} skipped due to too few samples for Shapiro-Wilk.")
+                continue
+
+            stat_residuals, p_val_residuals = shapiro(group)
+            result = "Not normal" if p_val_residuals < alpha else "Normal"
+
             rows_residuals.append(
                 {
-                    "radius": r,
-                    "statistic": None,
-                    "p_value": None,
-                    "result": "Too few samples",
+                    "dia": dia,
+                    "realization": realization,
+                    "statistic": stat_residuals,
+                    "p_value": p_val_residuals,
+                    "result": result,
                 }
             )
-            print(f"Radius {r} skipped due to too few samples for Shapiro-Wilk.")
-            continue
 
-        stat_residuals, p_val_residuals = shapiro(group)
-        result = "Not normal" if p_val_residuals < alpha else "Normal"
-
-        rows_residuals.append(
-            {
-                "radius": r,
-                "statistic": stat_residuals,
-                "p_value": p_val_residuals,
-                "result": result,
-            }
-        )
-
-        print(f"Shapiro-Wilk normality test on residuals for radius {r}:")
-        print(f"  Statistic = {stat_residuals:.4f}, p-value = {p_val_residuals:.4f}")
-        print(f"  Result: {result}")
-        print("\n")
+            print(f"Shapiro-Wilk normality test on residuals for diameter {dia}, realization {realization}:")
+            print(f"  Statistic = {stat_residuals:.4f}, p-value = {p_val_residuals:.4f}")
+            print(f"  Result: {result}")
+            print("\n")
 
     return pd.DataFrame(rows_residuals)
 
 
 def run_anova_test(
     alldata_df=None,
-    radius_range=None,
-    diameter_column=None,
-    p21_column=None,
-    alpha=None,
+    dia_min=None,
+    dia_max=None,
+    diameter_column="diameter",
+    realization_column="realization_id",
+    p21_column="P21",
+    alpha=alpha,
 ):
     """
-    Perform one-way ANOVA to test if mean P21 values differ across radius groups.
+    Perform one-way ANOVA to test if mean P21 values differ across diameter groups.
 
     Parameters:
-        alldata_df (GeoDataFrame): Input dataframe with P21 values and radius.
-        radius_range (tuple): (min_radius, max_radius) to filter the REV range.
+        alldata_df (DataFrame): Input dataframe with P21 values and diameter.
+        dia_min - dia_max to filter the REV range.
         diameter_column (str): Name of the radius column.
         p21_column (str): Name of the P21 value column.
         alpha (float): Significance threshold (default 0.05).
@@ -704,53 +727,48 @@ def run_anova_test(
     Returns:
         DataFrame: A one-row DataFrame with F-statistic, p-value, result label, and tested range.
     """
-    min_radius, max_radius = radius_range
-    filtered = alldata_df[
-        (alldata_df[diameter_column] >= min_radius)
-        & (alldata_df[diameter_column] <= max_radius)
-    ]
+    rows_anova = []
 
-    grouped = [
-        group[p21_column].values for _, group in filtered.groupby(diameter_column)
-    ]
+    for realization in alldata_df[realization_column].unique():
+        filtered = alldata_df[
+            (alldata_df[diameter_column] >= dia_min)
+            & (alldata_df[diameter_column] <= dia_max)
+            & (alldata_df[realization_column] == realization)
+        ]
 
-    # Check for sufficient data
-    if any(len(g) < 2 for g in grouped) or len(grouped) < 2:
-        return pd.DataFrame(
-            [
+        grouped = [
+            group[p21_column].values for _, group in filtered.groupby(diameter_column)
+        ]
+
+        # Check for sufficient data
+        if any(len(g) < 2 for g in grouped) or len(grouped) < 2:
+            rows_anova.append(
                 {
-                    "min_radius": min_radius,
-                    "max_radius": max_radius,
+                    "dia_min": dia_min,
+                    "dia_max": dia_max,
                     "f_statistic": None,
                     "p_value": None,
                     "result": "Too few groups or samples",
                 }
-            ]
+            )
+
+        f_stat, p_val = f_oneway(*grouped)
+        result = (
+            "At least one group mean is different"
+            if p_val < alpha
+            else "No significant difference"
         )
 
-    f_stat, p_val = f_oneway(*grouped)
-    result = (
-        "At least one group mean is different"
-        if p_val < alpha
-        else "No significant difference"
-    )
+        print(f"ANOVA test on diameters between {dia_max} and {dia_max}, realization {realization}:")
+        print(f"  F-statistic = {f_stat:.4f}, p-value = {p_val:.4f}")
+        print(f"  Result: {result}")
+        print("\n")
 
-    print(f"ANOVA test on radii between {min_radius} and {max_radius}:")
-    print(f"  F-statistic = {f_stat:.4f}, p-value = {p_val:.4f}")
-    print(f"  Result: {result}")
-    print("\n")
+        print("SOMETHING NOT WORKING IN ANOVA GROUPING _________________")
+        print("rows_anova:\n")
+        print(rows_anova)
 
-    return pd.DataFrame(
-        [
-            {
-                "min_radius": min_radius,
-                "max_radius": max_radius,
-                "f_statistic": f_stat,
-                "p_value": p_val,
-                "result": result,
-            }
-        ]
-    )
+    return pd.DataFrame(rows_anova)
 
 
 #################################################################################################
@@ -779,17 +797,18 @@ print(f"Using {n_cores} CPU cores for parallel execution.")
 
 all_results = Parallel(n_jobs=n_cores, verbose=5)(
     delayed(process_diameter)(
-        diameter=d, bnd_gdf=bnd_gdf, lineaments_gdf=lineaments_gdf
+        diameter=d, bnd_gdf=bnd_gdf, lineaments_gdf=lineaments_gdf,
     )
     for d in diameter_list
 )
 alldata_df = pd.concat(all_results, ignore_index=True)
-master_csv = os.path.join(
+
+alddata_csv = os.path.join(
     output_folder, f"circle_p21_alldata_{spacing_type}_spacing.csv"
 )
-alldata_df.to_csv(master_csv, index=False)
+alldata_df.to_csv(alddata_csv, index=False)
 print(
-    f"\n🏁 All diameters and realizations processed. Combined CSV saved to:\n{master_csv}"
+    f"\n🏁 All diameters and realizations processed. Combined CSV saved to:\n{alddata_csv}"
 )
 
 # --- Histogram of P21 for each diameter ---
@@ -825,6 +844,27 @@ if PLOT_BOXPLOTS:
     plt.close()
     print("✅ Box-and-whisker plot of P21 by diameter saved as PNG and SVG.")
 
+# if CREATE_GIFS:
+# --- Initialize lists for GIFs ---
+# map_figs_list = []
+# --->>> f"map_scanareas_d{diameter:.2f}.png"
+# hist_figs_list = []
+# --->>> f"histogram_P21_d{diameter:.2f}.png"
+#     map_figs = []
+#     for filename in map_figs_list:
+#         print(f"Adding {filename} to GIF...")
+#         map_figs.append(iio.imread(filename))
+#         print(map_figs[-1])
+#     map_scanareas_fname = os.path.join(output_folder, "map_scanareas")
+#     iio.imwrite(map_scanareas_fname, map_figs, fps=10, extension="gif")
+#
+#     hist_figs = []
+#     for filename in hist_figs_list:
+#         hist_figs.append(iio.imread(filename))
+#     hist_scanareas_fname = os.path.join(output_folder, "histogram_P21")
+#     iio.imwrite(hist_scanareas_fname, map_figs, fps=10, extension="gif")
+
+
 # --- Show geoprocessing time ---
 geoprocessing_time = time.time()
 
@@ -841,20 +881,20 @@ shapiro_df = run_shapiro_test(alldata_df=alldata_df)
 shapiro_csv = os.path.join(output_folder, "circle_p21_shapiro_results.csv")
 shapiro_df.to_csv(shapiro_csv, index=False)
 
-# # --- Run Shapiro residuals test ---
-# shapiro_residuals_df = check_normality_error_variables(alldata_df=alldata_df)
-# shapiro_residuals_csv = os.path.join(output_folder, "circle_p21_shapiro_residuals_results.csv")
-# shapiro_residuals_df.to_csv(shapiro_residuals_csv, index=False)
+# --- Run Shapiro residuals test ---
+shapiro_residuals_df = check_normality_error_variables(alldata_df=alldata_df)
+shapiro_residuals_csv = os.path.join(output_folder, "circle_p21_shapiro_residuals_results.csv")
+shapiro_residuals_df.to_csv(shapiro_residuals_csv, index=False)
 
 # --- Run Levene test ---
 levene_df = run_levene_test(alldata_df=alldata_df)
 levene_csv = os.path.join(output_folder, "circle_p21_levene_results.csv")
 levene_df.to_csv(levene_csv, index=False)
 
-# # --- Run ANOVA test ---
-# anova_df = run_anova_test(alldata_df=alldata_df)
-# anova_csv = os.path.join(output_folder, "circle_p21_anova_results.csv")
-# anova_df.to_csv(anova_csv, index=False)
+# --- Run ANOVA test ---
+anova_df = run_anova_test(alldata_df=alldata_df, dia_min=anova_diameter_min, dia_max=anova_diameter_max)
+anova_csv = os.path.join(output_folder, "circle_p21_anova_results.csv")
+anova_df.to_csv(anova_csv, index=False)
 
 # --- Show stats and total analysis time ---
 analysis_end_time = time.time()
