@@ -28,35 +28,42 @@ PLOT_FIGURES = True  # Set True to generate per-radius maps
 PLOT_HISTOGRAMS = True  # Set True to generate per-radius histograms
 PLOT_BOXPLOTS = True  # Set True to generate summary box/line plots
 
-# # --- Base analysis parameters TEST ---
-# n_iterations = 100  # Monte Carlo iterations per radius
-# n_points_target = 100  # Circles per iteration
-# radius_min = 5000  # Minimum circle radius
-# radius_max = 60000  # Maximum circle radius
-# n_steps = 12  # Number of radii
-# spacing_type = "linear"  # Options: "linear", "exponential", "log"
-#
-# # --- Locate input folder and files TEST ---
-# input_folder = "data_test"
-# boundary_file = os.path.join(input_folder, "boundary.shp")
-# lineaments_file = os.path.join(input_folder, "lineaments.shp")
-
-# --- Base analysis parameters PONTRELLI ---
-n_iterations = 100          # Monte Carlo iterations per radius
-n_points_target = 100       # Circles per iteration
-radius_min = 1              # Minimum circle radius
-radius_max = 26             # Maximum circle radius
-n_steps = 26                 # Number of radii
+# --- Base analysis parameters TEST ---
+n_iterations = 100  # Monte Carlo iterations per radius
+n_points_target = 100  # Circles per iteration
+radius_min = 5000  # Minimum circle radius
+radius_max = 60000  # Maximum circle radius
+n_steps = 12  # Number of radii
 spacing_type = "linear"  # Options: "linear", "exponential", "log"
 
-# --- Locate input folder and files PONTRELLI ---
-input_folder = "data_pontrelli"
-boundary_file = os.path.join(input_folder, "Interpretation-boundary.shp")
-lineaments_file = os.path.join(input_folder, "FN_set_1.shp")
+# --- Locate input folder and files TEST ---
+input_folder = "data_test"
+boundary_file = os.path.join(input_folder, "boundary.shp")
+lineaments_file = os.path.join(input_folder, "lineaments.shp")
+
+# # --- Base analysis parameters PONTRELLI ---
+# n_iterations = 100          # Monte Carlo iterations per radius
+# n_points_target = 100       # Circles per iteration
+# radius_min = 1              # Minimum circle radius
+# radius_max = 26             # Maximum circle radius
+# n_steps = 26                 # Number of radii
+# spacing_type = "linear"  # Options: "linear", "exponential", "log"
+#
+# # --- Locate input folder and files PONTRELLI ---
+# input_folder = "data_pontrelli"
+# boundary_file = os.path.join(input_folder, "Interpretation-boundary.shp")
+# lineaments_file = os.path.join(input_folder, "FN_set_1.shp")
 
 
-# --- Create output folder ---
+#################################################################################################
+# Functions are below this line
+
 def get_next_output_folder(base_folder):
+    """
+    Determines the next sequentially numbered folder within the specified base
+    folder. If the latest folder is empty, it will be reused. Otherwise, a new
+    folder with the next sequential number is created.
+    """
     if not os.path.exists(base_folder):
         print(f"ERROR: Folder not found: {base_folder}")
         exit(1)
@@ -80,99 +87,31 @@ def get_next_output_folder(base_folder):
     return next_folder
 
 
-output_folder = get_next_output_folder(input_folder)
-print(f"Output of this analysis will be saved in: {output_folder}")
-
-# --- Compute radius list ---
-if spacing_type == "linear":
-    radius_list = np.linspace(radius_min, radius_max, n_steps)
-elif spacing_type == "exponential":
-    radius_list = np.geomspace(radius_min, radius_max, n_steps)
-elif spacing_type == "log":
-    radius_list = np.logspace(np.log10(radius_min), np.log10(radius_max), n_steps)
-else:
-    raise ValueError("Invalid spacing_type: choose 'linear', 'exponential', or 'log'")
-print(f"Radii to process ({spacing_type} spacing): {np.round(radius_list, 2)}")
-
-# --- Parallelization setup ---
-n_cores = max(multiprocessing.cpu_count() - 1, 1)
-print(f"Using {n_cores} CPU cores for parallel execution.")
-
-# --- Load Data ---
-data_load_t0 = time.perf_counter()
-if not os.path.exists(boundary_file):
-    print(f"ERROR: Boundary file not found: {boundary_file}")
-    exit(1)
-if not os.path.exists(lineaments_file):
-    print(f"ERROR: Lineaments file not found: {lineaments_file}")
-    exit(1)
-bnd_gdf = gpd.read_file(boundary_file)
-lineaments_gdf = gpd.read_file(lineaments_file).to_crs(bnd_gdf.crs)
-print(f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter()-data_load_t0:.3f}s")
-
-# Precompute global outer polygon once (used for within checks)
-outer_poly_global = bnd_gdf.geometry.union_all()
-
-# --- Compute maximum admissible circle radius for the boundary polygon ---
-boundary_poly = bnd_gdf.geometry.iloc[0]
-max_radius = shapely.maximum_inscribed_circle(boundary_poly)
-center_coords = list(max_radius.coords)[0]
-center_pt = shapely.geometry.Point(center_coords)
-radius_coords = list(max_radius.coords)[1]
-radius_pt = shapely.geometry.Point(radius_coords)
-max_admissible_radius = max_radius.length
-print(
-    f"Center point of maximum inscribed circle: ({center_pt.x:.2f}, {center_pt.y:.2f})"
-)
-print(
-    f"Radius point of maximum inscribed circle: ({radius_pt.x:.2f}, {radius_pt.y:.2f})"
-)
-print(f"Maximum admissible circle radius: {max_admissible_radius:.2f}")
-
-# --- Plot boundary, max circle, center, and first point ---
-if PLOT_FIGURES:
-    fig_1, ax1 = plt.subplots(figsize=(8, 8))
-    bnd_gdf.plot(ax=ax1, facecolor="none", edgecolor="black", linewidth=1.5)
-    circle_patch = mpl_circle(
-        (center_pt.x, center_pt.y),
-        max_admissible_radius,
-        edgecolor="blue",
-        facecolor="none",
-        linewidth=2,
-        label="Max Admissible Circle",
-    )
-    ax1.plot(center_pt.x, center_pt.y, "o", color="green", markersize=12)
-    ax1.add_patch(circle_patch)
-    legend_handles = [
-        mpl_line([0], [0], color="black", lw=1.5, label="Boundary"),
-        mpl_patch(
-            edgecolor="blue", facecolor="none", linewidth=2, label="Max Admissible Circle"
-        ),
-        mpl_line(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor="green",
-            markersize=12,
-            label="Circle Center",
-        ),
-    ]
-    plt.title("Boundary, Maximum Inscribed Circle, Center, and First Point")
-    plt.legend(handles=legend_handles)
-    plt.axis("equal")
-    plt.tight_layout()
-    fig_path_png = os.path.join(output_folder, "boundary_max_radius_center.png")
-    fig_path_svg = os.path.join(output_folder, "boundary_max_radius_center.svg")
-    fig_1.savefig(fig_path_png, dpi=300)
-    fig_1.savefig(fig_path_svg, format="svg")
-    print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
-
-
-# --- Define Helper Function ---
 def run_iteration(
-    iter_id, inner_poly, outer_poly, lineaments_gdf, n_points_target, circle_radius, crs
+    iter_id, inner_poly, lineaments_gdf, n_points_target, circle_radius, crs
 ):
+    """
+    Runs an iteration to generate random circles within a polygon, compute their intersection
+    with given lineaments, and calculate related geometric metrics.
+
+    :param iter_id: The ID of the current iteration.
+    :type iter_id: int
+    :param inner_poly: The inner polygon within which random points and circles are generated.
+    :type inner_poly: shapely.geometry.Polygon
+    :param lineaments_gdf: A GeoDataFrame containing lineaments (geometric features) that will be
+        spatially joined with generated circles.
+    :type lineaments_gdf: geopandas.GeoDataFrame
+    :param n_points_target: The target number of random points to generate within the inner polygon.
+    :type n_points_target: int
+    :param circle_radius: The radius of the circles to be created around sampled points.
+    :type circle_radius: float
+    :param crs: The coordinate reference system (CRS) used for the generated GeoDataFrame objects.
+    :type crs: str or pyproj.CRS
+
+    :return: A GeoDataFrame containing the generated circles, including their spatial metrics:
+        clipped lengths of lineament intersections, areas, coordinates, and IDs.
+    :rtype: geopandas.GeoDataFrame
+    """
     # Random points inside inner polygon
     minx, miny, maxx, maxy = inner_poly.bounds
     bbox_area = (maxx - minx) * (maxy - miny)
@@ -191,7 +130,7 @@ def run_iteration(
         circles_gdf["length_per_area"] = []
         circles_gdf["x"] = []
         circles_gdf["y"] = []
-        circles_gdf["inside_outer"] = []
+        # circles_gdf["inside_outer"] = []
         return circles_gdf
 
     n_points_to_generate = (
@@ -229,7 +168,6 @@ def run_iteration(
         circles_gdf["length_per_area"] = 0
         circles_gdf["x"] = points_sample.geometry.x
         circles_gdf["y"] = points_sample.geometry.y
-        circles_gdf["inside_outer"] = circles_gdf.geometry.within(outer_poly)
         return circles_gdf
 
     # Vectorized intersection and length using Shapely 2.0 APIs
@@ -258,19 +196,28 @@ def run_iteration(
     circles_gdf["length_per_area"] = circles_gdf["clipped_length"] / circles_gdf["area"]
     circles_gdf["x"] = points_sample.geometry.x
     circles_gdf["y"] = points_sample.geometry.y
-    circles_gdf["inside_outer"] = circles_gdf.geometry.within(outer_poly)
     return circles_gdf
 
 
-# --- Parallel Radius Loop with Figure Saving ---
 def process_radius(radius):
+    """
+    Processes the given radius by performing several operations including
+    polygon buffering, data concatenation, and file saving. Iterations are
+    conducted to compute results, stored in a geodataframe, which gets saved
+    to a CSV file. Optionally, plots can be generated for visualization if
+    enabled by a global flag.
+
+    :param radius: The radius value (in meters) to process.
+    :type radius: float
+    :return: Geodataframe containing the results for the given radius.
+    :rtype: geopandas.GeoDataFrame
+    """
     print(f"\n▶️ Radius = {radius:.2f}")
     t0 = time.perf_counter()
     buffer_distance = -radius
 
     # Inner polygon for this radius (do not mutate bnd_gdf)
     inner_poly = bnd_gdf.geometry.buffer(buffer_distance).union_all()
-    outer_poly = outer_poly_global
 
     # Run all iterations (sequential within this radius)
     iter_t0 = time.perf_counter()
@@ -279,7 +226,6 @@ def process_radius(radius):
         result = run_iteration(
             i,
             inner_poly,
-            outer_poly,
             lineaments_gdf,
             n_points_target,
             radius,
@@ -345,6 +291,102 @@ def process_radius(radius):
     return results_gdf
 
 
+def generate_radius_list(radius_min=None, radius_max=None, n_steps=None, spacing_type=None):
+    if spacing_type == "linear":
+        radius_list = np.linspace(radius_min, radius_max, n_steps)
+    elif spacing_type == "exponential":
+        radius_list = np.geomspace(radius_min, radius_max, n_steps)
+    elif spacing_type == "log":
+        radius_list = np.logspace(np.log10(radius_min), np.log10(radius_max), n_steps)
+    else:
+        raise ValueError("Invalid spacing_type: choose 'linear', 'exponential', or 'log'")
+    print(f"Radii to process ({spacing_type} spacing): {np.round(radius_list, 2)}")
+    return radius_list
+
+
+#################################################################################################
+# Main script execution starts here
+
+# --- Create output folder ---
+output_folder = get_next_output_folder(input_folder)
+print(f"Output of this analysis will be saved in: {output_folder}")
+
+# --- Compute radius list ---
+radius_list = generate_radius_list(radius_min=radius_min, radius_max=radius_max, n_steps=n_steps, spacing_type=spacing_type)
+
+# --- Parallelization setup ---
+n_cores = max(multiprocessing.cpu_count() - 1, 1)
+print(f"Using {n_cores} CPU cores for parallel execution.")
+
+# --- Load Data ---
+data_load_t0 = time.perf_counter()
+if not os.path.exists(boundary_file):
+    print(f"ERROR: Boundary file not found: {boundary_file}")
+    exit(1)
+if not os.path.exists(lineaments_file):
+    print(f"ERROR: Lineaments file not found: {lineaments_file}")
+    exit(1)
+bnd_gdf = gpd.read_file(boundary_file)
+lineaments_gdf = gpd.read_file(lineaments_file).to_crs(bnd_gdf.crs)
+print(f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter()-data_load_t0:.3f}s")
+
+# --- Compute maximum admissible circle radius for the boundary polygon ---
+boundary_poly = bnd_gdf.geometry.iloc[0]
+max_radius = shapely.maximum_inscribed_circle(boundary_poly)
+center_coords = list(max_radius.coords)[0]
+center_pt = shapely.geometry.Point(center_coords)
+radius_coords = list(max_radius.coords)[1]
+radius_pt = shapely.geometry.Point(radius_coords)
+max_admissible_radius = max_radius.length
+print(
+    f"Center point of maximum inscribed circle: ({center_pt.x:.2f}, {center_pt.y:.2f})"
+)
+print(
+    f"Radius point of maximum inscribed circle: ({radius_pt.x:.2f}, {radius_pt.y:.2f})"
+)
+print(f"Maximum admissible circle radius: {max_admissible_radius:.2f}")
+
+# --- Plot boundary, max circle, center, and first point ---
+if PLOT_FIGURES:
+    fig_1, ax1 = plt.subplots(figsize=(8, 8))
+    bnd_gdf.plot(ax=ax1, facecolor="none", edgecolor="black", linewidth=1.5)
+    circle_patch = mpl_circle(
+        (center_pt.x, center_pt.y),
+        max_admissible_radius,
+        edgecolor="blue",
+        facecolor="none",
+        linewidth=2,
+        label="Max Admissible Circle",
+    )
+    ax1.plot(center_pt.x, center_pt.y, "o", color="green", markersize=12)
+    ax1.add_patch(circle_patch)
+    legend_handles = [
+        mpl_line([0], [0], color="black", lw=1.5, label="Boundary"),
+        mpl_patch(
+            edgecolor="blue", facecolor="none", linewidth=2, label="Max Admissible Circle"
+        ),
+        mpl_line(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="green",
+            markersize=12,
+            label="Circle Center",
+        ),
+    ]
+    plt.title("Boundary, Maximum Inscribed Circle, Center, and First Point")
+    plt.legend(handles=legend_handles)
+    plt.axis("equal")
+    plt.tight_layout()
+    fig_path_png = os.path.join(output_folder, "boundary_max_radius_center.png")
+    fig_path_svg = os.path.join(output_folder, "boundary_max_radius_center.svg")
+    fig_1.savefig(fig_path_png, dpi=300)
+    fig_1.savefig(fig_path_svg, format="svg")
+    print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
+
+
+
 # --- Run in parallel for all radii ---
 all_results = Parallel(n_jobs=n_cores, verbose=5)(
     delayed(process_radius)(r) for r in radius_list
@@ -363,7 +405,7 @@ if PLOT_HISTOGRAMS:
     for radius in sorted(master_df["radius_tested"].unique()):
         subset = master_df[master_df["radius_tested"] == radius]
         plt.figure(figsize=(8, 6))
-        sns.histplot(subset["length_per_area"], bins=30, kde=True, color="royalblue")
+        sns.histplot(subset["length_per_area"], bins='doane', kde=True, color="royalblue")
         plt.title(f"Histogram of length_per_area for radius {radius:.2f}")
         plt.xlabel("length_per_area")
         plt.ylabel("Count")
@@ -426,3 +468,5 @@ params_df = pd.DataFrame([params])
 params_csv = os.path.join(output_folder, "analysis_parameters_summary.csv")
 params_df.to_csv(params_csv, index=False)
 print(f"✅ Analysis parameters summary saved to: {params_csv}")
+
+
