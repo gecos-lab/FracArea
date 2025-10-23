@@ -58,7 +58,8 @@ lineaments_file = os.path.join(input_folder, "lineaments.shp")
 #################################################################################################
 # Functions are below this line
 
-def get_next_output_folder(base_folder):
+
+def get_next_output_folder(base_folder=None):
     """
     Determines the next sequentially numbered folder within the specified base
     folder. If the latest folder is empty, it will be reused. Otherwise, a new
@@ -84,11 +85,19 @@ def get_next_output_folder(base_folder):
         next_num = last_num + 1
     next_folder = os.path.join(base_folder, f"{next_num:03d}")
     os.makedirs(next_folder, exist_ok=True)
+
+    print(f"Output of this analysis will be saved in: {next_folder}")
+
     return next_folder
 
 
 def run_iteration(
-    iter_id, inner_poly, lineaments_gdf, n_points_target, circle_radius, crs
+    iter_id=None,
+    inner_poly=None,
+    lineaments_gdf=None,
+    n_points_target=None,
+    circle_radius=None,
+    crs=None,
 ):
     """
     Runs an iteration to generate random circles within a polygon, compute their intersection
@@ -199,7 +208,7 @@ def run_iteration(
     return circles_gdf
 
 
-def process_radius(radius):
+def process_radius(radius=None, bnd_gdf=None, lineaments_gdf=None):
     """
     Processes the given radius by performing several operations including
     polygon buffering, data concatenation, and file saving. Iterations are
@@ -207,6 +216,8 @@ def process_radius(radius):
     to a CSV file. Optionally, plots can be generated for visualization if
     enabled by a global flag.
 
+    :param bnd_gdf:
+    :param lineaments_gdf:
     :param radius: The radius value (in meters) to process.
     :type radius: float
     :return: Geodataframe containing the results for the given radius.
@@ -224,12 +235,12 @@ def process_radius(radius):
     results_list = []
     for i in range(1, n_iterations + 1):
         result = run_iteration(
-            i,
-            inner_poly,
-            lineaments_gdf,
-            n_points_target,
-            radius,
-            bnd_gdf.crs,
+            iter_id=i,
+            inner_poly=inner_poly,
+            lineaments_gdf=lineaments_gdf,
+            n_points_target=n_points_target,
+            circle_radius=radius,
+            crs=bnd_gdf.crs,
         )
         result["radius_tested"] = radius
         results_list.append(result)
@@ -251,10 +262,18 @@ def process_radius(radius):
         # Plot colored by length_per_area
         fig, ax = plt.subplots(figsize=(8, 8))
         bnd_gdf.plot(
-            ax=ax, facecolor="none", edgecolor="black", linewidth=1.2, label="Outer Polygon"
+            ax=ax,
+            facecolor="none",
+            edgecolor="black",
+            linewidth=1.2,
+            label="Outer Polygon",
         )
         gpd.GeoSeries(inner_poly).plot(
-            ax=ax, facecolor="none", edgecolor="red", linestyle="--", label="Inner Polygon"
+            ax=ax,
+            facecolor="none",
+            edgecolor="red",
+            linestyle="--",
+            label="Inner Polygon",
         )
         lineaments_gdf.plot(ax=ax, color="gray", linewidth=0.5, label="Lineaments")
         last_iteration_result.plot(
@@ -269,9 +288,16 @@ def process_radius(radius):
         # Custom legend handles
         legend_handles = [
             mpl_line([0], [0], color="black", lw=1.2, label="Outer Polygon"),
-            mpl_line([0], [0], color="red", lw=1.2, linestyle="--", label="Inner Polygon"),
+            mpl_line(
+                [0], [0], color="red", lw=1.2, linestyle="--", label="Inner Polygon"
+            ),
             mpl_line([0], [0], color="gray", lw=0.5, label="Lineaments"),
-            mpl_patch(edgecolor="black", facecolor="none", linewidth=0.3, label="Circle (length_per_area)")
+            mpl_patch(
+                edgecolor="black",
+                facecolor="none",
+                linewidth=0.3,
+                label="Circle (length_per_area)",
+            ),
         ]
         plt.title(f"Radius = {radius:.2f} m — Last Iteration (Colored by Density)")
         plt.legend(handles=legend_handles)
@@ -291,7 +317,9 @@ def process_radius(radius):
     return results_gdf
 
 
-def generate_radius_list(radius_min=None, radius_max=None, n_steps=None, spacing_type=None):
+def generate_radius_list(
+    radius_min=None, radius_max=None, n_steps=None, spacing_type=None
+):
     if spacing_type == "linear":
         radius_list = np.linspace(radius_min, radius_max, n_steps)
     elif spacing_type == "exponential":
@@ -299,8 +327,12 @@ def generate_radius_list(radius_min=None, radius_max=None, n_steps=None, spacing
     elif spacing_type == "log":
         radius_list = np.logspace(np.log10(radius_min), np.log10(radius_max), n_steps)
     else:
-        raise ValueError("Invalid spacing_type: choose 'linear', 'exponential', or 'log'")
+        raise ValueError(
+            "Invalid spacing_type: choose 'linear', 'exponential', or 'log'"
+        )
+
     print(f"Radii to process ({spacing_type} spacing): {np.round(radius_list, 2)}")
+
     return radius_list
 
 
@@ -308,15 +340,15 @@ def generate_radius_list(radius_min=None, radius_max=None, n_steps=None, spacing
 # Main script execution starts here
 
 # --- Create output folder ---
-output_folder = get_next_output_folder(input_folder)
-print(f"Output of this analysis will be saved in: {output_folder}")
+output_folder = get_next_output_folder(base_folder=input_folder)
 
 # --- Compute radius list ---
-radius_list = generate_radius_list(radius_min=radius_min, radius_max=radius_max, n_steps=n_steps, spacing_type=spacing_type)
-
-# --- Parallelization setup ---
-n_cores = max(multiprocessing.cpu_count() - 1, 1)
-print(f"Using {n_cores} CPU cores for parallel execution.")
+radius_list = generate_radius_list(
+    radius_min=radius_min,
+    radius_max=radius_max,
+    n_steps=n_steps,
+    spacing_type=spacing_type,
+)
 
 # --- Load Data ---
 data_load_t0 = time.perf_counter()
@@ -328,7 +360,9 @@ if not os.path.exists(lineaments_file):
     exit(1)
 bnd_gdf = gpd.read_file(boundary_file)
 lineaments_gdf = gpd.read_file(lineaments_file).to_crs(bnd_gdf.crs)
-print(f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter()-data_load_t0:.3f}s")
+print(
+    f"✅ Loaded data: {len(bnd_gdf)} polygons, {len(lineaments_gdf)} lineaments in {time.perf_counter()-data_load_t0:.3f}s"
+)
 
 # --- Compute maximum admissible circle radius for the boundary polygon ---
 boundary_poly = bnd_gdf.geometry.iloc[0]
@@ -363,7 +397,10 @@ if PLOT_FIGURES:
     legend_handles = [
         mpl_line([0], [0], color="black", lw=1.5, label="Boundary"),
         mpl_patch(
-            edgecolor="blue", facecolor="none", linewidth=2, label="Max Admissible Circle"
+            edgecolor="blue",
+            facecolor="none",
+            linewidth=2,
+            label="Max Admissible Circle",
         ),
         mpl_line(
             [0],
@@ -386,13 +423,14 @@ if PLOT_FIGURES:
     print(f"✅ Figure saved: {fig_path_png}, {fig_path_svg}")
 
 
+# --- Run analysis in parallel ---
+n_cores = max(multiprocessing.cpu_count() - 1, 1)
+print(f"Using {n_cores} CPU cores for parallel execution.")
 
-# --- Run in parallel for all radii ---
 all_results = Parallel(n_jobs=n_cores, verbose=5)(
-    delayed(process_radius)(r) for r in radius_list
+    delayed(process_radius)(radius=r, bnd_gdf=bnd_gdf, lineaments_gdf=lineaments_gdf)
+    for r in radius_list
 )
-
-# --- Combine all results ---
 master_df = pd.concat(all_results, ignore_index=True)
 master_csv = os.path.join(
     output_folder, f"circle_density_ALL_{spacing_type}_spacing.csv"
@@ -405,7 +443,9 @@ if PLOT_HISTOGRAMS:
     for radius in sorted(master_df["radius_tested"].unique()):
         subset = master_df[master_df["radius_tested"] == radius]
         plt.figure(figsize=(8, 6))
-        sns.histplot(subset["length_per_area"], bins='doane', kde=True, color="royalblue")
+        sns.histplot(
+            subset["length_per_area"], bins="doane", kde=True, color="royalblue"
+        )
         plt.title(f"Histogram of length_per_area for radius {radius:.2f}")
         plt.xlabel("length_per_area")
         plt.ylabel("Count")
@@ -424,7 +464,9 @@ if PLOT_HISTOGRAMS:
 # --- Box-and-whisker plot of length_per_area for all radii ---
 if PLOT_BOXPLOTS:
     fig_2 = plt.figure(figsize=(12, 7))
-    sns.boxplot(x="radius_tested", y="length_per_area", data=master_df, color="lightblue")
+    sns.boxplot(
+        x="radius_tested", y="length_per_area", data=master_df, color="lightblue"
+    )
     plt.title("Box-and-Whisker Plot of length_per_area by Circle Radius")
     plt.xlabel("Circle Radius")
     plt.ylabel("length_per_area")
@@ -444,7 +486,9 @@ elapsed_seconds = analysis_end_time - analysis_start_time
 hours = int(elapsed_seconds // 3600)
 minutes = int((elapsed_seconds % 3600) // 60)
 seconds = int(elapsed_seconds % 60)
-print(f"\n⏱️ Total analysis time: {hours}h {minutes}m {seconds}s ({elapsed_seconds:.2f} seconds)")
+print(
+    f"\n⏱️ Total analysis time: {hours}h {minutes}m {seconds}s ({elapsed_seconds:.2f} seconds)"
+)
 
 # --- Save analysis parameters summary CSV ---
 params = {
@@ -468,5 +512,3 @@ params_df = pd.DataFrame([params])
 params_csv = os.path.join(output_folder, "analysis_parameters_summary.csv")
 params_df.to_csv(params_csv, index=False)
 print(f"✅ Analysis parameters summary saved to: {params_csv}")
-
-
