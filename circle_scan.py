@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle as mpl_circle
 from matplotlib.patches import Patch as mpl_patch
 from matplotlib.lines import Line2D as mpl_line
+from scipy.stats import levene, f_oneway, shapiro
 import os
 from joblib import Parallel, delayed
 import multiprocessing
@@ -27,6 +28,8 @@ analysis_start_time = time.time()
 PLOT_FIGURES = True  # Set True to generate per-diameter maps
 PLOT_HISTOGRAMS = True  # Set True to generate per-diameter histograms
 PLOT_BOXPLOTS = True  # Set True to generate summary box/line plots
+
+alpha = 0.05  # Significance level for statistical tests
 
 # --- Base analysis parameters TEST ---
 n_iterations = 100  # Monte Carlo iterations per diameter
@@ -131,15 +134,14 @@ def run_iteration(
     if poly_area == 0 or np.isnan(scaling_factor) or np.isinf(scaling_factor):
         # Return circles_gdf with zero clipped_length and other columns
         circles_gdf = gpd.GeoDataFrame(geometry=[], crs=crs)
-        circles_gdf["circle_id"] = []
-        circles_gdf["iteration_id"] = []
-        circles_gdf["clipped_length"] = []
         circles_gdf["diameter"] = []
         circles_gdf["area"] = []
+        circles_gdf["iteration_id"] = []
+        circles_gdf["circle_id"] = []
+        circles_gdf["clipped_length"] = []
         circles_gdf["P21"] = []
         circles_gdf["x"] = []
         circles_gdf["y"] = []
-        # circles_gdf["inside_outer"] = []
         return circles_gdf
 
     n_points_to_generate = (
@@ -171,9 +173,9 @@ def run_iteration(
 
     # If no lineaments intersect any circles, return circles_gdf with zero clipped_length
     if joined.empty:
-        circles_gdf["clipped_length"] = 0
         circles_gdf["diameter"] = circle_diameter
         circles_gdf["area"] = circles_gdf.geometry.area
+        circles_gdf["clipped_length"] = 0
         circles_gdf["P21"] = 0
         circles_gdf["x"] = points_sample.geometry.x
         circles_gdf["y"] = points_sample.geometry.y
@@ -199,12 +201,15 @@ def run_iteration(
         joined.groupby("circle_id")["clipped_length"].sum().reset_index()
     )
     circles_gdf = circles_gdf.merge(lengths_per_circle, on="circle_id", how="left")
-    circles_gdf["clipped_length"] = circles_gdf["clipped_length"].fillna(0)
     circles_gdf["diameter"] = circle_diameter
     circles_gdf["area"] = circles_gdf.geometry.area
+    circles_gdf["clipped_length"] = circles_gdf["clipped_length"].fillna(0)
     circles_gdf["P21"] = circles_gdf["clipped_length"] / circles_gdf["area"]
     circles_gdf["x"] = points_sample.geometry.x
     circles_gdf["y"] = points_sample.geometry.y
+
+    circles_gdf = circles_gdf[["diameter", "area", "iteration_id", "circle_id", "clipped_length", "P21", "x", "y", "geometry"]]
+
     return circles_gdf
 
 
@@ -242,9 +247,11 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
             circle_diameter=diameter,
             crs=bnd_gdf.crs,
         )
-        result["diameter_tested"] = diameter
+        # deep copy the result geodataframe for this iteration, to be plotted at the end of the diameter loop
+        last_iteration_result = result.copy(deep=True)
+        # drop geometry and other columns to save memory
+        result.drop(['geometry', 'area', 'circle_id', 'clipped_length'], axis=1, inplace=True)
         results_list.append(result)
-        last_iteration_result = result
     print(f"  Iterations done in {time.perf_counter()-iter_t0:.3f}s")
 
     # Combine iterations for this diameter
@@ -255,7 +262,7 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None):
     # Save CSV
     csv_t0 = time.perf_counter()
     csv_path = os.path.join(output_folder, f"circle_density_r{diameter:.2f}.csv")
-    results_gdf.drop(columns="geometry").to_csv(csv_path, index=False)
+    results_gdf.to_csv(csv_path, index=False)
     print(f"  CSV written in {time.perf_counter()-csv_t0:.3f}s")
 
     if PLOT_FIGURES:
@@ -461,6 +468,197 @@ def load_and_validate_data(boundary_file=None, lineaments_file=None):
     return bnd_gdf, lineaments_gdf, max_admissible_diameter
 
 
+def run_levene_test(areas_gpd=None, diameter_column=None, p21_column=None, alpha=None):
+    """
+    Perform Levene's test for equality of variances between consecutive radius groups.
+
+    Parameters:
+        areas_gdf (GeoDataFrame): The dataframe containing P21 values and radii.
+        diameter_column (str): The name of the column containing radius values.
+        p21_column (str): The name of the column containing P21 values.
+        alpha (float): Significance level for the test.
+
+    Returns:
+        DataFrame: A DataFrame with radius pairs, test statistic, p-values, and result interpretation.
+    """
+    rows_levene = []
+
+    # Sort the unique radius values
+    radii_sorted = sorted(areas_gpd['radius'].unique())
+
+    for i in range(len(radii_sorted) - 1):
+        r1 = radii_sorted[i]
+        r2 = radii_sorted[i + 1]
+
+        group1 = areas_gpd[areas_gpd[diameter_column] == r1][p21_column]
+        group2 = areas_gpd[areas_gpd[diameter_column] == r2][p21_column]
+
+        stat_levene, p_levene = levene(group1, group2, center='median')
+
+        result = "Different variances" if p_levene < alpha else "No significant difference"
+
+        rows_levene.append({
+            'r1': r1,
+            'r2': r2,
+            'statistic': stat_levene,
+            'p_value': p_levene,
+            'result': result
+        })
+
+        print(f"Levene test between radius {r1} and {r2}:")
+        print(f"  Statistic = {stat_levene:.4f}, p-value = {p_levene:.4f}")
+        print(f"  Result: {result}")
+        print("-" * 50)
+
+    return pd.DataFrame(rows_levene)
+
+
+def run_shapiro_test(areas_gpd=None, diameter_column=None, p21_column=None, alpha=None):
+    """
+    Perform Shapiro-Wilk test for normality on p21 values for each radius group.
+
+    Parameters:
+        areas_gdf (GeoDataFrame): The dataframe containing P21 values and radii.
+        diameter_column (str): Column name for radii.
+        p21_column (str): Column name for P21 values.
+        alpha (float): Significance level (default 0.1 as per Mooi et al.).
+
+    Returns:
+        DataFrame: A DataFrame with radius, test statistic, p-values, and result interpretation.
+    """
+    rows_shapiro = []
+
+    # Sort the unique radius values
+    radii_sorted = sorted(areas_gpd['radius'].unique())
+
+    for r in radii_sorted:
+        group = areas_gpd[areas_gpd[diameter_column] == r][p21_column]
+
+        if len(group) < 3:
+            # Shapiro-Wilk requires at least 3 observations
+            rows_shapiro.append({
+                'radius': r,
+                'statistic': None,
+                'p_value': None,
+                'result': 'Too few samples'
+            })
+            print(f"Radius {r} skipped (too few samples for Shapiro-Wilk).")
+            continue
+
+        stat_shapiro, p_shapiro = shapiro(group)
+        result = "Not normal" if p_shapiro < alpha else "Normal"
+
+        rows_shapiro.append({
+            'radius': r,
+            'statistic': stat_shapiro,
+            'p_value': p_shapiro,
+            'result': result
+        })
+
+        print(f"Normality test on radius {r}:")
+        print(f"  Statistic = {stat_shapiro:.4f}, p-value = {p_shapiro:.4f}")
+        print(f"  Result: {result}")
+        print("-" * 50)
+
+    return pd.DataFrame(rows_shapiro)
+
+
+def check_normality_error_variables(areas_gpd=None, diameter_column=None, residuals_column=None, alpha=None):
+    """
+    Perform Shapiro-Wilk test for normality on residuals for each radius group.
+
+    Parameters:
+        areas_gpd (GeoDataFrame): DataFrame containing residuals and radii.
+        diameter_column (str): Column name for radii.
+        residuals_column (str): Column name for residuals.
+        alpha (float): Significance level.
+
+    Returns:
+        DataFrame: Results with radius, statistic, p-value, and interpretation.
+    """
+    rows_residuals = []
+    radii_sorted = sorted(areas_gpd[diameter_column].unique())
+
+    for r in radii_sorted:
+        group = areas_gpd[areas_gpd[diameter_column] == r][residuals_column]
+
+        if len(group) < 3:
+            rows_residuals.append({
+                'radius': r,
+                'statistic': None,
+                'p_value': None,
+                'result': 'Too few samples'
+            })
+            print(f"Radius {r} skipped (too few samples for Shapiro-Wilk).")
+            continue
+
+        stat_residuals, p_val_residuals = shapiro(group)
+        result = "Not normal" if p_val_residuals < alpha else "Normal"
+
+        rows_residuals.append({
+            'radius': r,
+            'statistic': stat_residuals,
+            'p_value': p_val_residuals,
+            'result': result
+        })
+
+        print(f"Normality test on residuals for radius {r}:")
+        print(f"  Statistic = {stat_residuals:.4f}, p-value = {p_val_residuals:.4f}")
+        print(f"  Result: {result}")
+        print("-" * 50)
+
+    return pd.DataFrame(rows_residuals)
+
+
+def run_anova_test(areas_gpd=None, radius_range=None, diameter_column=None, p21_column=None, alpha=None):
+    """
+    Perform one-way ANOVA to test if mean P21 values differ across radius groups.
+
+    Parameters:
+        areas_gpd (GeoDataFrame): Input dataframe with P21 values and radius.
+        radius_range (tuple): (min_radius, max_radius) to filter the REV range.
+        diameter_column (str): Name of the radius column.
+        p21_column (str): Name of the P21 value column.
+        alpha (float): Significance threshold (default 0.05).
+
+    Returns:
+        DataFrame: A one-row DataFrame with F-statistic, p-value, result label, and tested range.
+    """
+    min_radius, max_radius = radius_range
+    filtered = areas_gpd[
+        (areas_gpd[diameter_column] >= min_radius) &
+        (areas_gpd[diameter_column] <= max_radius)
+    ]
+
+    grouped = [group[p21_column].values for _, group in filtered.groupby(diameter_column)]
+
+    # Check for sufficient data
+    if any(len(g) < 2 for g in grouped) or len(grouped) < 2:
+        return pd.DataFrame([{
+            'min_radius': min_radius,
+            'max_radius': max_radius,
+            'f_statistic': None,
+            'p_value': None,
+            'result': 'Too few groups or samples'
+        }])
+
+    f_stat, p_val = f_oneway(*grouped)
+    result = "At least one group mean is different" if p_val < alpha else "No significant difference"
+
+    print(f"ANOVA test on radii between {min_radius} and {max_radius}:")
+    print(f"  F-statistic = {f_stat:.4f}, p-value = {p_val:.4f}")
+    print(f"  Result: {result}")
+    print("-" * 50)
+
+    return pd.DataFrame([{
+        'min_radius': min_radius,
+        'max_radius': max_radius,
+        'f_statistic': f_stat,
+        'p_value': p_val,
+        'result': result
+    }])
+
+
 #################################################################################################
 # Main script execution starts here
 
@@ -493,13 +691,13 @@ master_df = pd.concat(all_results, ignore_index=True)
 master_csv = os.path.join(
     output_folder, f"circle_density_ALL_{spacing_type}_spacing.csv"
 )
-master_df.drop(columns="geometry").to_csv(master_csv, index=False)
+master_df.to_csv(master_csv, index=False)
 print(f"\n🏁 All radii processed. Combined CSV saved to:\n{master_csv}")
 
 # --- Histogram of P21 for each diameter ---
 if PLOT_HISTOGRAMS:
-    for diameter in sorted(master_df["diameter_tested"].unique()):
-        subset = master_df[master_df["diameter_tested"] == diameter]
+    for diameter in sorted(master_df["diameter"].unique()):
+        subset = master_df[master_df["diameter"] == diameter]
         plt.figure(figsize=(8, 6))
         sns.histplot(
             subset["P21"], bins="doane", kde=True, color="royalblue"
@@ -523,7 +721,7 @@ if PLOT_HISTOGRAMS:
 if PLOT_BOXPLOTS:
     fig_2 = plt.figure(figsize=(12, 7))
     sns.boxplot(
-        x="diameter_tested", y="P21", data=master_df, color="lightblue"
+        x="diameter", y="P21", data=master_df, color="lightblue"
     )
     plt.title("Box-and-Whisker Plot of P21 by Circle Diameter")
     plt.xlabel("Circle Diameter")
