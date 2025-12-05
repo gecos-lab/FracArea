@@ -50,9 +50,9 @@ n_steps = 26                 # Number of radii
 spacing_type = "linear"  # Options: "linear", "exponential", "log"
 
 # --- Locate input folder and files PONTRELLI ---
-input_folder = "data_pontrelli"
-boundary_file = os.path.join(input_folder, "Interpretation-boundary.shp")
-lineaments_file = os.path.join(input_folder, "FN_set_1.shp")
+input_folder = "data_bristol"
+boundary_file = os.path.join(input_folder, "boundary_area_4.shp")
+lineaments_file = os.path.join(input_folder, "Area4_reprojected_length.shp")
 
 
 # --- Create output folder ---
@@ -221,44 +221,42 @@ def run_iteration(
         lineaments_gdf, circles_gdf[["circle_id", "geometry"]], predicate="intersects"
     )
 
-    # If no lineaments intersect any circles, return circles_gdf with zero clipped_length
-    if joined.empty:
-        circles_gdf["clipped_length"] = 0
-        circles_gdf["radius"] = circle_radius
-        circles_gdf["area"] = circles_gdf.geometry.area
-        circles_gdf["length_per_area"] = 0
-        circles_gdf["x"] = points_sample.geometry.x
-        circles_gdf["y"] = points_sample.geometry.y
-        circles_gdf["inside_outer"] = circles_gdf.geometry.within(outer_poly)
-        return circles_gdf
-
-    # Vectorized intersection and length using Shapely 2.0 APIs
-    # Align each lineament geometry with its corresponding circle geometry
-    circle_geom_arr = circles_gdf.geometry.values
-    circle_ids = joined["circle_id"].to_numpy()
-    joined_circle_geoms = circle_geom_arr[circle_ids]
-
-    # Compute intersections and lengths in vectorized form
-    inter_geoms = shapely.intersection(joined.geometry.values, joined_circle_geoms)
-    lengths_arr = shapely.length(inter_geoms)
-    # Set length to 0 where intersection is empty
-    empty_mask = shapely.is_empty(inter_geoms)
-    if empty_mask.any():
-        lengths_arr = np.where(empty_mask, 0.0, lengths_arr)
-
-    # Aggregate and merge
-    joined["clipped_length"] = lengths_arr
-    lengths_per_circle = (
-        joined.groupby("circle_id")["clipped_length"].sum().reset_index()
-    )
-    circles_gdf = circles_gdf.merge(lengths_per_circle, on="circle_id", how="left")
-    circles_gdf["clipped_length"] = circles_gdf["clipped_length"].fillna(0)
+    # Record circle parameters
     circles_gdf["radius"] = circle_radius
-    circles_gdf["area"] = circles_gdf.geometry.area
-    circles_gdf["length_per_area"] = circles_gdf["clipped_length"] / circles_gdf["area"]
+    circles_gdf["area"] = circle_radius ** 2 * np.pi
     circles_gdf["x"] = points_sample.geometry.x
     circles_gdf["y"] = points_sample.geometry.y
     circles_gdf["inside_outer"] = circles_gdf.geometry.within(outer_poly)
+
+    # If no lineaments intersect any circles, return circles_gdf with zero clipped_length
+    if joined.empty:
+        circles_gdf["clipped_length"] = 0
+        circles_gdf["length_per_area"] = 0
+    else:
+        # Vectorized intersection and length using Shapely 2.0 APIs
+        # Align each lineament geometry with its corresponding circle geometry
+        circle_geom_arr = circles_gdf.geometry.values
+        circle_ids = joined["circle_id"].to_numpy()
+        joined_circle_geoms = circle_geom_arr[circle_ids]
+
+        # Compute intersections and lengths in vectorized form
+        inter_geoms = shapely.intersection(joined.geometry.values, joined_circle_geoms)
+        lengths_arr = shapely.length(inter_geoms)
+        # Set length to 0 where intersection is empty
+        empty_mask = shapely.is_empty(inter_geoms)
+        if empty_mask.any():
+            lengths_arr = np.where(empty_mask, 0.0, lengths_arr)
+
+        # Aggregate and merge
+        joined["clipped_length"] = lengths_arr
+        lengths_per_circle = (
+            joined.groupby("circle_id")["clipped_length"].sum().reset_index()
+        )
+        circles_gdf = circles_gdf.merge(lengths_per_circle, on="circle_id", how="left")
+
+        # Write length and length_per_area columns
+        circles_gdf["clipped_length"] = circles_gdf["clipped_length"].fillna(0)
+        circles_gdf["length_per_area"] = circles_gdf["clipped_length"] / circles_gdf["area"]
     return circles_gdf
 
 
