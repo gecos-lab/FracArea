@@ -888,11 +888,13 @@ print(
 shapiro_residuals_df = check_normality_error_variables(alldata_df=alldata_df)
 shapiro_residuals_csv = os.path.join(output_folder, "circle_p21_shapiro_residuals_results.csv")
 shapiro_residuals_df.to_csv(shapiro_residuals_csv, index=False)
+# plot levene results here
 
 # --- Run Levene test ---
 levene_df = run_levene_test(alldata_df=alldata_df)
 levene_csv = os.path.join(output_folder, "circle_p21_levene_results.csv")
 levene_df.to_csv(levene_csv, index=False)
+# plot levene results here
 print("Shapiro on residuals completed --------------------------------")
 
 # --- Show analysis time ---
@@ -908,6 +910,7 @@ print(f"ANOVA will be run between diameters {anova_diameter_min} and {anova_diam
 anova_df = run_anova_test(alldata_df=alldata_df, dia_min=anova_diameter_min, dia_max=anova_diameter_max)
 anova_csv = os.path.join(output_folder, "circle_p21_anova_results.csv")
 anova_df.to_csv(anova_csv, index=False)
+# plot levene results here
 
 # --- Show stats and total analysis time ---
 analysis_end_time = time.time()
