@@ -51,12 +51,10 @@ alpha = 0.05  # Significance level for statistical tests
 # --- Base analysis parameters PONTRELLI ---
 n_iterations = 100          # Monte Carlo iterations per diameter
 n_points_target = 100       # Circles per iteration
-diameter_min = 2              # Minimum circle diameter
-diameter_max = 50             # Maximum circle diameter
-n_steps = 49                 # Number of radii
+diameter_min = 4              # Minimum circle diameter
+diameter_max = 16             # Maximum circle diameter
+n_steps = 7                 # Number of radii
 spacing_type = "linear"  # Options: "linear", "exponential", "log"
-anova_diameter_min = 7
-anova_diameter_max = 10
 
 # --- Locate input folder and files PONTRELLI ---
 input_folder = "data_pontrelli"
@@ -246,7 +244,7 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None, map_figs_
     :return: Geodataframe containing the results for the given diameter.
     :rtype: geopandas.GeoDataFrame
     """
-    print(f"\n▶️ Diameter = {diameter:.2f}")
+    # print(f"\n▶️ Diameter = {diameter:.2f}")
     t0 = time.perf_counter()
     buffer_distance = -diameter / 2
 
@@ -273,12 +271,12 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None, map_figs_
         )
         result['residuals'] = result['P21'] - result.groupby('diameter')['P21'].transform('mean')
         results_list.append(result)
-    print(f"  Iterations done in {time.perf_counter()-iter_t0:.3f}s")
+    # print(f"  Iterations done in {time.perf_counter()-iter_t0:.3f}s")
 
     # Combine iterations for this diameter
     concat_t0 = time.perf_counter()
     results_gdf = pd.concat(results_list, ignore_index=True)
-    print(f"  Concatenation in {time.perf_counter()-concat_t0:.3f}s")
+    # print(f"  Concatenation in {time.perf_counter()-concat_t0:.3f}s")
 
     if PLOT_FIGURES:
         # Plot colored by P21
@@ -334,7 +332,7 @@ def process_diameter(diameter=None, bnd_gdf=None, lineaments_gdf=None, map_figs_
         fig.savefig(fig_path_png, dpi=300)
         fig.savefig(fig_path_svg, format="svg")
         plt.close()
-        print(f"  Figures saved in diameter loop")
+        # print(f"  Figures saved in diameter loop")
 
     return results_gdf
 
@@ -497,7 +495,7 @@ def run_levene_test(
     alldata_df=None,
     diameter_column="diameter",
     realization_column="realization_id",
-    p21_column="P21",
+    tested_variable="residuals",
     alpha=alpha,
 ):
     """
@@ -506,7 +504,7 @@ def run_levene_test(
     Parameters:
         alldata_df (DataFrame): The dataframe containing P21 values and radii.
         diameter_column (str): The name of the column containing radius values.
-        p21_column (str): The name of the column containing P21 values.
+        tested_variable (str): The name of the column containing P21 values.
         alpha (float): Significance level for the test.
 
     Returns:
@@ -520,120 +518,124 @@ def run_levene_test(
 
     diameter_sorted = sorted(alldata_df[diameter_column].unique())
 
-    for dia_idx in range(len(diameter_sorted) - 1):
-        dia_min = diameter_sorted[dia_idx]
-        dia_max = diameter_sorted[dia_idx + 1]
+    for groups_in_step in range(3, n_steps-1, 1):
+        # print(f"Levene groups_in_step: {groups_in_step}")
+        for dia_min_idx in range(n_steps - groups_in_step):
+            dia_min = diameter_sorted[dia_min_idx]
+            dia_max = diameter_sorted[dia_min_idx + groups_in_step]
+            # print(f"dia_min_idx: {dia_min_idx}, dia_min: {dia_min}, dia_max: {dia_max}")
+            # print(" ")
 
-        for realization in alldata_df[realization_column].unique():
-            group1 = alldata_df[
-                (alldata_df[diameter_column] == dia_min)
-                & (alldata_df[realization_column] == realization)
-            ][p21_column]
-            group2 = alldata_df[
-                (alldata_df[diameter_column] == dia_max)
-                & (alldata_df[realization_column] == realization)
-            ][p21_column]
+            for realization in alldata_df[realization_column].unique():
+                group1 = alldata_df[
+                    (alldata_df[diameter_column] == dia_min)
+                    & (alldata_df[realization_column] == realization)
+                ][tested_variable]
+                group2 = alldata_df[
+                    (alldata_df[diameter_column] == dia_max)
+                    & (alldata_df[realization_column] == realization)
+                ][tested_variable]
 
-            stat_levene, p_levene = levene(group1, group2, center="median")
+                stat_levene, p_levene = levene(group1, group2, center="median")
 
-            result = (
-                "Different variances"
-                if p_levene < alpha
-                else "No significant difference"
-            )
+                result = (
+                    "Different variances"
+                    if p_levene < alpha
+                    else "No significant difference"
+                )
 
-            rows_levene.append(
-                {
-                    "dia_min": dia_min,
-                    "dia_max": dia_max,
-                    "realization": realization,
-                    "statistic": stat_levene,
-                    "p_value": p_levene,
-                    "result": result,
-                }
-            )
+                rows_levene.append(
+                    {
+                        "dia_min": dia_min,
+                        "dia_max": dia_max,
+                        "realization": realization,
+                        "statistic": stat_levene,
+                        "p_value": p_levene,
+                        "result": result,
+                    }
+                )
 
-            print(
-                f"Levene test between diameters {dia_min} and {dia_max}, realization {realization}:"
-            )
-            print(f"  Statistic = {stat_levene:.4f}, p-value = {p_levene:.4f}")
-            print(f"  Result: {result}")
-            print("\n")
+                # print(
+                #     f"Levene test between diameters {dia_min} and {dia_max}, realization {realization}:"
+                # )
+                # print(f"  Statistic = {stat_levene:.4f}, p-value = {p_levene:.4f}")
+                # print(f"  Result: {result}")
+                # print("\n")
 
     return pd.DataFrame(rows_levene)
 
 
-def run_shapiro_test(
-    alldata_df=None,
-    diameter_column="diameter",
-    realization_column="realization_id",
-    p21_column="P21",
-    alpha=alpha,
-):
-    """
-    Perform a Shapiro-Wilk test for normality on p21 values for each radius group.
-
-    Parameters:
-        alldata_df (DataFrame): The dataframe containing P21 values and radii.
-        diameter_column (str): Column name for radii.
-        p21_column (str): Column name for P21 values.
-        alpha (float): Significance level (default 0.1 as per Mooi et al.).
-
-    Returns:
-        DataFrame: A DataFrame with radius, test statistic, p-values, and result interpretation.
-
-    IF NEEDED, TO RUN THIS IN PARALLEL, WE CAN ALTERNATIVELY
-    FIX THE realization TO EQUAL TO A VALUE AND THEN
-    FEED THE FUNCTION TO A PARALLEL LOOP
-    """
-    rows_shapiro = []
-
-    diameter_sorted = sorted(alldata_df[diameter_column].unique())
-
-    for dia in diameter_sorted:
-        for realization in alldata_df[realization_column].unique():
-            group = alldata_df[
-                (alldata_df[diameter_column] == dia)
-                & (alldata_df[realization_column] == realization)
-            ][p21_column]
-
-            if len(group) < 3:
-                # Shapiro-Wilk requires at least 3 observations
-                rows_shapiro.append(
-                    {
-                        "dia": dia,
-                        "realization": realization,
-                        "statistic": None,
-                        "p_value": None,
-                        "result": "Too few samples",
-                    }
-                )
-                print(
-                    f"Diameter {dia} skipped due to too few samples for Shapiro-Wilk."
-                )
-                continue
-
-            stat_shapiro, p_shapiro = shapiro(group)
-            result = "Not normal" if p_shapiro < alpha else "Normal"
-
-            rows_shapiro.append(
-                {
-                    "dia": dia,
-                    "realization": realization,
-                    "statistic": stat_shapiro,
-                    "p_value": p_shapiro,
-                    "result": result,
-                }
-            )
-
-            print(
-                f"Shapiro-Wilk normality test on diameter {dia}, realization {realization}:"
-            )
-            print(f"  Statistic = {stat_shapiro:.4f}, p-value = {p_shapiro:.4f}")
-            print(f"  Result: {result}")
-            print("\n")
-
-    return pd.DataFrame(rows_shapiro)
+# def run_shapiro_test(
+#     alldata_df=None,
+#     diameter_column="diameter",
+#     realization_column="realization_id",
+#     tested_variable="P21",
+#     alpha=alpha,
+# ):
+#     """
+#     Perform a Shapiro-Wilk test for normality on p21 values for each radius group.
+#
+#     Parameters:
+#         alldata_df (DataFrame): The dataframe containing P21 values and radii.
+#         diameter_column (str): Column name for radii.
+#         tested_variable (str): Column name for P21 values.
+#         alpha (float): Significance level (default 0.1 as per Mooi et al.).
+#
+#     Returns:
+#         DataFrame: A DataFrame with radius, test statistic, p-values, and result interpretation.
+#
+#     IF NEEDED, TO RUN THIS IN PARALLEL, WE CAN ALTERNATIVELY
+#     FIX THE realization TO EQUAL TO A VALUE AND THEN
+#     FEED THE FUNCTION TO A PARALLEL LOOP
+#     """
+#     rows_shapiro = []
+#
+#     diameter_sorted = sorted(alldata_df[diameter_column].unique())
+#
+#     for dia in diameter_sorted:
+#         for realization in alldata_df[realization_column].unique():
+#             group = alldata_df[
+#                 (alldata_df[diameter_column] == dia)
+#                 & (alldata_df[realization_column] == realization)
+#             ][tested_variable]
+#
+#             if len(group) < 3:
+#                 # Shapiro-Wilk requires at least 3 observations
+#                 rows_shapiro.append(
+#                     {
+#                         "dia": dia,
+#                         "realization": realization,
+#                         "statistic": None,
+#                         "p_value": None,
+#                         "result": "Too few samples",
+#                     }
+#                 )
+#                 print(
+#                     f"Diameter {dia} skipped due to too few samples for Shapiro-Wilk."
+#                 )
+#                 continue
+#
+#             stat_shapiro, p_shapiro = shapiro(group)
+#             result = "Not normal" if p_shapiro < alpha else "Normal"
+#
+#             rows_shapiro.append(
+#                 {
+#                     "dia": dia,
+#                     "realization": realization,
+#                     "statistic": stat_shapiro,
+#                     "p_value": p_shapiro,
+#                     "result": result,
+#                 }
+#             )
+#
+#             print(
+#                 f"Shapiro-Wilk normality test on diameter {dia}, realization {realization}:"
+#             )
+#             print(f"  Statistic = {stat_shapiro:.4f}, p-value = {p_shapiro:.4f}")
+#             print(f"  Result: {result}")
+#             print("\n")
+#
+#     return pd.DataFrame(rows_shapiro)
 
 
 def check_normality_error_variables(
@@ -697,10 +699,10 @@ def check_normality_error_variables(
                 }
             )
 
-            print(f"Shapiro-Wilk normality test on residuals for diameter {dia}, realization {realization}:")
-            print(f"  Statistic = {stat_residuals:.4f}, p-value = {p_val_residuals:.4f}")
-            print(f"  Result: {result}")
-            print("\n")
+            # print(f"Shapiro-Wilk normality test on residuals for diameter {dia}, realization {realization}:")
+            # print(f"  Statistic = {stat_residuals:.4f}, p-value = {p_val_residuals:.4f}")
+            # print(f"  Result: {result}")
+            # print("\n")
 
     return pd.DataFrame(rows_residuals)
 
@@ -711,7 +713,7 @@ def run_anova_test(
     dia_max=None,
     diameter_column="diameter",
     realization_column="realization_id",
-    p21_column="P21",
+    tested_variable="P21",
     alpha=alpha,
 ):
     """
@@ -721,7 +723,7 @@ def run_anova_test(
         alldata_df (DataFrame): Input dataframe with P21 values and diameter.
         dia_min - dia_max to filter the REV range.
         diameter_column (str): Name of the radius column.
-        p21_column (str): Name of the P21 value column.
+        tested_variable (str): Name of the P21 value column.
         alpha (float): Significance threshold (default 0.05).
 
     Returns:
@@ -737,7 +739,7 @@ def run_anova_test(
         ]
 
         grouped = [
-            group[p21_column].values for _, group in filtered.groupby(diameter_column)
+            group[tested_variable].values for _, group in filtered.groupby(diameter_column)
         ]
 
         # Check for sufficient data
@@ -759,14 +761,15 @@ def run_anova_test(
             else "No significant difference"
         )
 
-        print(f"ANOVA test on diameters between {dia_max} and {dia_max}, realization {realization}:")
+        print("CHECK ANOVA GROUPING _________________")
+        print(rows_anova)
+        print("rows_anova:\n")
+
+        print(f"ANOVA test on diameters between {dia_min} and {dia_max}, realization {realization}:")
         print(f"  F-statistic = {f_stat:.4f}, p-value = {p_val:.4f}")
         print(f"  Result: {result}")
         print("\n")
 
-        print("SOMETHING NOT WORKING IN ANOVA GROUPING _________________")
-        print("rows_anova:\n")
-        print(rows_anova)
 
     return pd.DataFrame(rows_anova)
 
@@ -876,10 +879,10 @@ print(
     f"\n⏱️ Total simulation time: {hours}h {minutes}m {seconds}s ({geoprocessing_seconds:.2f} seconds)"
 )
 
-# --- Run Shapiro test ---
-shapiro_df = run_shapiro_test(alldata_df=alldata_df)
-shapiro_csv = os.path.join(output_folder, "circle_p21_shapiro_results.csv")
-shapiro_df.to_csv(shapiro_csv, index=False)
+# # --- Run Shapiro test ---
+# shapiro_df = run_shapiro_test(alldata_df=alldata_df)
+# shapiro_csv = os.path.join(output_folder, "circle_p21_shapiro_results.csv")
+# shapiro_df.to_csv(shapiro_csv, index=False)
 
 # --- Run Shapiro residuals test ---
 shapiro_residuals_df = check_normality_error_variables(alldata_df=alldata_df)
@@ -890,8 +893,18 @@ shapiro_residuals_df.to_csv(shapiro_residuals_csv, index=False)
 levene_df = run_levene_test(alldata_df=alldata_df)
 levene_csv = os.path.join(output_folder, "circle_p21_levene_results.csv")
 levene_df.to_csv(levene_csv, index=False)
+print("Shapiro on residuals completed --------------------------------")
+
+# --- Show analysis time ---
+analysis_time = time.time()
 
 # --- Run ANOVA test ---
+anova_diameter_min = float(input("anova_diameter_min:"))
+anova_diameter_max = float(input("anova_diameter_max:"))
+anova_diameter_min = min(diameter_list, key=lambda x: abs(x - anova_diameter_min))
+anova_diameter_max = min(diameter_list, key=lambda x: abs(x - anova_diameter_max))
+print(f"ANOVA will be run between diameters {anova_diameter_min} and {anova_diameter_max}")
+
 anova_df = run_anova_test(alldata_df=alldata_df, dia_min=anova_diameter_min, dia_max=anova_diameter_max)
 anova_csv = os.path.join(output_folder, "circle_p21_anova_results.csv")
 anova_df.to_csv(anova_csv, index=False)
